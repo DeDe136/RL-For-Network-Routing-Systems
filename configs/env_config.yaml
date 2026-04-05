@@ -1,0 +1,4 @@
+env:
+  mean_traffic_mbps: 10.0
+  max_hops: 8
+  seed: 42

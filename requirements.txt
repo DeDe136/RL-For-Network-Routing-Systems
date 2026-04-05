@@ -1,0 +1,6 @@
+gymnasium
+networkx
+numpy
+matplotlib
+pyyaml
+pytest

@@ -1,0 +1,13 @@
+q_learning:
+  alpha: 0.1          # learning rate
+  gamma: 0.99         # discount factor
+  epsilon: 1.0        # khởi đầu exploration
+  eps_min: 0.05       # epsilon tối thiểu
+  eps_decay: 0.995    # hệ số giảm epsilon mỗi step
+ 
+training:
+  num_episodes: 3000
+  print_every: 200
+  save_every: 500
+  checkpoint_dir: checkpoints
+  log_dir: logs
