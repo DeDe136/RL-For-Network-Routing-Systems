@@ -9,11 +9,11 @@ Reward nằm trong khoảng [-1, +1].
 
 
 def compute_reward(
+    path_found: bool,
     total_delay: float,
     dropped: bool,
     hops: int,
     utilization: float,
-    path_found: bool,
 ) -> float:
     """
     Args:
@@ -39,8 +39,8 @@ def compute_reward(
     if dropped:
         reward -= 0.3
 
-    # Phạt hop count thừa (càng ngắn càng tốt, giả sử tối đa 6 hops)
-    reward -= min(1.0, hops / 6.0) * 0.2
+    # Phạt hop count thừa (càng ngắn càng tốt, giả sử tối đa 7 hops)
+    reward -= min(1.0, hops / 7.0) * 0.2
 
     # Phạt utilization cao
     reward -= utilization * 0.1

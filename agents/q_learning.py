@@ -78,16 +78,18 @@ class QLearningAgent(BaseAgent):
         if not self.training:
             # Greedy hoàn toàn khi eval
             q_vals = self.Q[current_node, dst_node, :]
-            q_vals_valid = [(q_vals[a], a) for a in valid]
-            return max(q_vals_valid)[1]
+            max_q = max(q_vals[a] for a in valid)
+            best_actions = [a for a in valid if q_vals[a] == max_q]
+            return int(np.random.choice(best_actions))
 
         # ε-greedy
         if np.random.random() < self.epsilon:
             return int(np.random.choice(valid))
 
         q_vals = self.Q[current_node, dst_node, :]
-        q_vals_valid = [(q_vals[a], a) for a in valid]
-        return max(q_vals_valid)[1]
+        max_q = max(q_vals[a] for a in valid)
+        best_actions = [a for a in valid if q_vals[a] == max_q]
+        return int(np.random.choice(best_actions))
 
     def update(
         self,
@@ -155,8 +157,9 @@ class QLearningAgent(BaseAgent):
             valid = [a for a in self._valid_actions(cur) if a not in visited]
             if not valid:
                 break
-            q_vals = [(self.Q[cur, dst, a], a) for a in valid]
-            _, nxt = max(q_vals)
+            max_q = max(self.Q[cur, dst, a] for a in valid)
+            best_actions = [a for a in valid if Q[cur, dst, a] == max_q]
+            nxt = np.random.choice(best_actions)
             path.append(nxt)
             visited.add(nxt)
             cur = nxt

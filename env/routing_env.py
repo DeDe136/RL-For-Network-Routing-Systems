@@ -29,7 +29,7 @@ class NetworkRoutingEnv(gym.Env):
     def __init__(
         self,
         mean_traffic_mbps: float = 10.0,
-        max_hops: int = 8,
+        max_hops: int = 7,
         render_mode: Optional[str] = None,
         seed: int = 42,
     ):
@@ -85,16 +85,17 @@ class NetworkRoutingEnv(gym.Env):
 
         terminated = False
         truncated  = False
+        path_found = False
         reward     = 0.0
 
         # Kiểm tra link hợp lệ
-        if not self.topo.has_link(self._current_node, action):
-            # Chọn node không có link → phạt nhẹ, giữ nguyên vị trí
-            reward = -0.5
-            info = self._info()
-            if self.render_mode == "human":
-                self._render_step(action, reward, "invalid link")
-            return self._obs(), reward, terminated, truncated, info
+        # if not self.topo.has_link(self._current_node, action):
+        #     # Chọn node không có link → phạt nhẹ, giữ nguyên vị trí
+        #     reward = -0.5
+        #     info = self._info()
+        #     if self.render_mode == "human":
+        #         self._render_step(action, reward, "invalid link")
+        #     return self._obs(), reward, terminated, truncated, info
 
         # Di chuyển đến next_hop
         link = self.topo.link(self._current_node, action)
@@ -109,37 +110,31 @@ class NetworkRoutingEnv(gym.Env):
         )
         if result["dropped"]:
             self._dropped = True
+            truncated = True
 
         # Kiểm tra điều kiện kết thúc
         if self._current_node == self._dst:
             # Đến đích
-            avg_util = np.mean([
-                self.topo.link(self._path[i], self._path[i+1]).utilization
-                for i in range(len(self._path) - 1)
-            ])
-            reward = compute_reward(
-                total_delay=self._total_delay,
-                dropped=self._dropped,
-                hops=self._hops,
-                utilization=float(avg_util),
-                path_found=True,
-            )
+            path_found = True
             terminated = True
 
         elif self._hops >= self.max_hops:
             # Vượt giới hạn hop
-            reward = compute_reward(
-                total_delay=self._total_delay,
-                dropped=self._dropped,
-                hops=self._hops,
-                utilization=0.5,
-                path_found=False,
-            )
             truncated = True
-
-        else:
-            # Step trung gian — reward nhỏ âm để khuyến khích đi nhanh
-            reward = -0.05
+        
+        # utilization trung bình các link trên path
+        avg_util = np.mean([
+            self.topo.link(self._path[i], self._path[i+1]).utilization
+            for i in range(len(self._path) - 1)
+        ])
+        # Tính reward thu được khi thực hiện action
+        reward = compute_reward(
+            path_found,
+            total_delay=self._total_delay,
+            dropped=self._dropped,
+            hops=self._hops,
+            utilization=float(avg_util),
+        )
 
         info = self._info()
         if self.render_mode == "human":
