@@ -8,8 +8,8 @@ Vòng lặp một episode:
   step(action) được gọi lặp lại:
     - action = next_hop node mà agent chọn
     - env dịch chuyển "con trỏ" từ current_node → next_hop
-    - Khi current_node == dst  →  terminated=True, tính reward đầy đủ
-    - Nếu vượt max_hops hoặc chọn node không kết nối → truncated/penalty
+    - Khi current_node == dst và không drop → terminated=True
+    - Khi drop hoặc vượt max_hops → truncated=True
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,7 +20,7 @@ from network.topology import NetworkTopology
 from network.traffic_generator import TrafficGenerator
 from network.metrics import NetworkMetrics
 from env.spaces import make_observation_space, make_action_space, NUM_NODES
-from env.reward import compute_reward
+from env.reward import compute_final_reward, compute_shaping_reward
 
 
 class NetworkRoutingEnv(gym.Env):
@@ -29,7 +29,7 @@ class NetworkRoutingEnv(gym.Env):
     def __init__(
         self,
         mean_traffic_mbps: float = 10.0,
-        max_hops: int = 7,
+        max_hops: int = 8,
         render_mode: Optional[str] = None,
         seed: int = 42,
     ):
@@ -85,19 +85,9 @@ class NetworkRoutingEnv(gym.Env):
 
         terminated = False
         truncated  = False
-        path_found = False
-        reward     = 0.0
-
-        # Kiểm tra link hợp lệ
-        # if not self.topo.has_link(self._current_node, action):
-        #     # Chọn node không có link → phạt nhẹ, giữ nguyên vị trí
-        #     reward = -0.5
-        #     info = self._info()
-        #     if self.render_mode == "human":
-        #         self._render_step(action, reward, "invalid link")
-        #     return self._obs(), reward, terminated, truncated, info
 
         # Di chuyển đến next_hop
+        # (action luôn hợp lệ vì agent chỉ chọn trong valid neighbors)
         link = self.topo.link(self._current_node, action)
         self._total_delay += link.delay
         self._hops += 1
@@ -110,35 +100,66 @@ class NetworkRoutingEnv(gym.Env):
         )
         if result["dropped"]:
             self._dropped = True
-            truncated = True
 
-        # Kiểm tra điều kiện kết thúc
-        if self._current_node == self._dst:
-            # Đến đích
-            path_found = True
+        # ── Điều kiện kết thúc: if/elif đảm bảo chỉ một trong
+        #    terminated/truncated được True tại mỗi bước ──────────────
+        if self._dropped:
+            # Drop → truncated, phạt nặng.
+            # Ưu tiên cao nhất: drop thắng kể cả khi current_node == dst.
+            truncated = True
+            avg_util, avg_queue = self._path_avg_metrics()
+            reward = compute_final_reward(
+                path_found=False,
+                total_delay=self._total_delay,
+                dropped=True,
+                hops=self._hops,
+                utilization=avg_util,
+                avg_queue_util=avg_queue,
+            )
+
+        elif self._current_node == self._dst:
+            # Đến đích thành công, không có drop
             terminated = True
+            avg_util, avg_queue = self._path_avg_metrics()
+            reward = compute_final_reward(
+                path_found=True,
+                total_delay=self._total_delay,
+                dropped=False,
+                hops=self._hops,
+                utilization=avg_util,
+                avg_queue_util=avg_queue,
+            )
 
         elif self._hops >= self.max_hops:
-            # Vượt giới hạn hop
+            # Hết hop mà chưa đến đích
             truncated = True
-        
-        # utilization trung bình các link trên path
-        avg_util = np.mean([
-            self.topo.link(self._path[i], self._path[i+1]).utilization
-            for i in range(len(self._path) - 1)
-        ])
-        # Tính reward thu được khi thực hiện action
-        reward = compute_reward(
-            path_found,
-            total_delay=self._total_delay,
-            dropped=self._dropped,
-            hops=self._hops,
-            utilization=float(avg_util),
-        )
+            avg_util, avg_queue = self._path_avg_metrics()
+            reward = compute_final_reward(
+                path_found=False,
+                total_delay=self._total_delay,
+                dropped=False,
+                hops=self._hops,
+                utilization=avg_util,
+                avg_queue_util=avg_queue,
+            )
+
+        else:
+            # Step trung gian: shaping reward dựa trên link vừa đi qua
+            reward = compute_shaping_reward(
+                current_link_delay=link.delay,
+                current_link_utilization=link.utilization,
+                current_link_queue_util=link.queue_util,
+            )
 
         info = self._info()
         if self.render_mode == "human":
-            self._render_step(action, reward, "ok" if not self._dropped else "drop")
+            if terminated:
+                status = "success"
+            elif truncated:
+                status = "fail (drop)" if self._dropped else "fail (max_hops)"
+            else:
+                status = f"hop {self._hops}"
+            self._render_step(action, reward, status)
 
         return self._obs(), reward, terminated, truncated, info
 
@@ -156,6 +177,18 @@ class NetworkRoutingEnv(gym.Env):
     # ------------------------------------------------------------------ #
     #  Helpers                                                             #
     # ------------------------------------------------------------------ #
+
+    def _path_avg_metrics(self) -> Tuple[float, float]:
+        """Trả về (avg_utilization, avg_queue_util) trên path hiện tại."""
+        if len(self._path) < 2:
+            return 0.0, 0.0
+        links = [
+            self.topo.link(self._path[i], self._path[i + 1])
+            for i in range(len(self._path) - 1)
+        ]
+        avg_util  = float(np.mean([lk.utilization  for lk in links]))
+        avg_queue = float(np.mean([lk.queue_util   for lk in links]))
+        return avg_util, avg_queue
 
     def _obs(self) -> Dict:
         return {
@@ -179,6 +212,6 @@ class NetworkRoutingEnv(gym.Env):
     def _render_step(self, action: int, reward: float, status: str):
         print(
             f"  [{self._src}→{self._dst}] "
-            f"cur={self._path[-2] if len(self._path)>1 else self._src} "
+            f"cur={self._path[-2] if len(self._path) > 1 else self._src} "
             f"→ next={action} | r={reward:+.3f} | {status}"
         )
