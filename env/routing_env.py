@@ -86,6 +86,15 @@ class NetworkRoutingEnv(gym.Env):
         terminated = False
         truncated  = False
 
+        # Kiểm tra link hợp lệ
+        if not self.topo.has_link(self._current_node, action):
+            # Chọn node không có link → phạt nhẹ, giữ nguyên vị trí
+            reward = -0.5
+            info = self._info()
+            if self.render_mode == "human":
+                self._render_step(action, reward, "invalid link")
+            return self._obs(), reward, terminated, truncated, info
+        
         # Di chuyển đến next_hop
         # (action luôn hợp lệ vì agent chỉ chọn trong valid neighbors)
         link = self.topo.link(self._current_node, action)

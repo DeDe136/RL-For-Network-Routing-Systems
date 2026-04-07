@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/  # only if this is a virtualenv, not your source env/ package
+
+# IDE/editor
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Checkpoints
+checkpoints/
+
+# Test and build artifacts
+.pytest_cache/
+.mypy_cache/
+coverage.xml
+htmlcov/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Dependency directories
+envs/
+.venv/
+
+# Misc
+*.egg-info/
+*.egg
+dist/
+build/

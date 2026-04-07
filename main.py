@@ -108,6 +108,11 @@ def run_demo():
 
     print(f"  {'Pair':<8} {'QL Path':<30} {'QL delay':>9}  {'SP Path':<30} {'SP delay':>9}")
     print("  " + "-" * 90)
+
+    pair_labels = []
+    ql_delays = []
+    sp_delays = []
+
     for src, dst in pairs:
         ql_path = agent.best_path(src, dst)
         sp_path = sp_topo.shortest_path(src, dst)
@@ -117,11 +122,47 @@ def run_demo():
         sp_delay = sum(topo.link(sp_path[i], sp_path[i+1]).delay
                        for i in range(len(sp_path)-1)) if len(sp_path)>1 else 0
 
+        pair_labels.append(f"{src}-{dst}")
+        ql_delays.append(ql_delay)
+        sp_delays.append(sp_delay)
+
         ql_str = " → ".join(map(str, ql_path))
         sp_str = " → ".join(map(str, sp_path))
         match  = "✓" if ql_path == sp_path else "≠"
         print(f"  {src}→{dst}  {match}  {ql_str:<28} {ql_delay:>6.0f}ms"
               f"   {sp_str:<28} {sp_delay:>6.0f}ms")
+
+    try:
+        import matplotlib.pyplot as plt
+
+        x = np.arange(len(pair_labels))
+        width = 0.35
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        rects1 = ax.bar(x - width/2, ql_delays, width, label='Q-learning')
+        rects2 = ax.bar(x + width/2, sp_delays, width, label='OSPF')
+
+        ax.set_xlabel('Node pair')
+        ax.set_ylabel('Total delay (ms)')
+        ax.set_title('So sánh độ trễ Q-learning vs OSPF theo cặp nguồn-đích')
+        ax.set_xticks(x)
+        ax.set_xticklabels(pair_labels)
+        ax.legend()
+        ax.grid(axis='y', linestyle='--', alpha=0.4)
+
+        for rect in rects1 + rects2:
+            height = rect.get_height()
+            ax.annotate(f'{height:.0f}',
+                        xy=(rect.get_x() + rect.get_width() / 2, height),
+                        xytext=(0, 3),
+                        textcoords='offset points',
+                        ha='center', va='bottom', fontsize=8)
+
+        plt.tight_layout()
+        plt.show()
+    except ImportError:
+        print('\nMatplotlib chưa được cài đặt, không thể hiển thị biểu đồ.')
+        print('Cài đặt bằng: pip install matplotlib')
 
 
 # ─────────────────────────────────────────────────────────────────────

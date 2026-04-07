@@ -158,7 +158,7 @@ class QLearningAgent(BaseAgent):
             if not valid:
                 break
             max_q = max(self.Q[cur, dst, a] for a in valid)
-            best_actions = [a for a in valid if Q[cur, dst, a] == max_q]
+            best_actions = [a for a in valid if self.Q[cur, dst, a] == max_q]
             nxt = np.random.choice(best_actions)
             path.append(nxt)
             visited.add(nxt)
