@@ -10,7 +10,7 @@ import pytest
 import numpy as np
 import tempfile
 
-from agents.q_learning import QLearningAgent
+from agents.q_learning_delay import QLearningAgent
 from network.topology import NetworkTopology
 
 

@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import env  # noqa — kích hoạt gymnasium.register
 import gymnasium as gym
 
-from agents.q_learning import QLearningAgent
+from agents.q_learning_delay import QLearningAgent
 from utils.logger import Logger
 
 

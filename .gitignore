@@ -8,8 +8,6 @@ __pycache__/
 # Virtual environments
 venv/
 .venv/
-ENV/
-env/  # only if this is a virtualenv, not your source env/ package
 
 # IDE/editor
 .vscode/

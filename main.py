@@ -82,7 +82,7 @@ def run_eval(render: bool = False):
 # ─────────────────────────────────────────────────────────────────────
 
 def run_demo():
-    from agents.q_learning import QLearningAgent
+    from agents.q_learning_delay import QLearningAgent
     from network.topology import NetworkTopology
 
     ckpt = "checkpoints/qtable_final.npy"
@@ -103,7 +103,7 @@ def run_demo():
     print(agent.q_table_summary())
     print()
 
-    pairs = [(0,7),(1,7),(2,7),(3,7),(0,5),(0,6),(1,4),(2,5)]
+    pairs = [(0,7),(1,7),(2,7),(3,7),(0,5),(0,6),(0,4),(2,5)]
     sp_topo = NetworkTopology()
 
     print(f"  {'Pair':<8} {'QL Path':<30} {'QL delay':>9}  {'SP Path':<30} {'SP delay':>9}")

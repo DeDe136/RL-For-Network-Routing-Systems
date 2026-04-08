@@ -40,8 +40,8 @@ class QLearningAgent(BaseAgent):
         self.alpha   = cfg.get("alpha",   0.1)    # learning rate
         self.gamma   = cfg.get("gamma",   0.99)   # discount
         self.epsilon = cfg.get("epsilon", 1.0)    # exploration
-        self.eps_min = cfg.get("eps_min", 0.05)
-        self.eps_decay = cfg.get("eps_decay", 0.995)
+        self.eps_min = cfg.get("eps_min", 0.1)
+        self.eps_decay = cfg.get("eps_decay", 0.99999585)
 
         # Q-table: shape (current_node, dst_node, next_hop)
         self.Q = np.zeros((NUM_NODES, NUM_NODES, NUM_NODES), dtype=np.float64)

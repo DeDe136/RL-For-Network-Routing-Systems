@@ -16,7 +16,7 @@ import numpy as np
 import env  # noqa
 import gymnasium as gym
 
-from agents.q_learning import QLearningAgent
+from agents.q_learning_delay import QLearningAgent
 
 
 def load_cfg(path):

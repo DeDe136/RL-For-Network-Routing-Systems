@@ -20,7 +20,8 @@ from network.topology import NetworkTopology
 from network.traffic_generator import TrafficGenerator
 from network.metrics import NetworkMetrics
 from env.spaces import make_observation_space, make_action_space, NUM_NODES
-from env.reward import compute_final_reward, compute_shaping_reward
+# from env.reward import compute_final_reward, compute_shaping_reward
+from env.reward_q_learning import compute_final_reward_q_learning, compute_step_reward_q_learning
 
 
 class NetworkRoutingEnv(gym.Env):
@@ -116,49 +117,21 @@ class NetworkRoutingEnv(gym.Env):
             # Drop → truncated, phạt nặng.
             # Ưu tiên cao nhất: drop thắng kể cả khi current_node == dst.
             truncated = True
-            avg_util, avg_queue = self._path_avg_metrics()
-            reward = compute_final_reward(
-                path_found=False,
-                total_delay=self._total_delay,
-                dropped=True,
-                hops=self._hops,
-                utilization=avg_util,
-                avg_queue_util=avg_queue,
-            )
+            reward = -1 + compute_step_reward_q_learning(current_link_delay=link.delay)
 
         elif self._current_node == self._dst:
             # Đến đích thành công, không có drop
             terminated = True
-            avg_util, avg_queue = self._path_avg_metrics()
-            reward = compute_final_reward(
-                path_found=True,
-                total_delay=self._total_delay,
-                dropped=False,
-                hops=self._hops,
-                utilization=avg_util,
-                avg_queue_util=avg_queue,
-            )
+            reward = 1 + compute_step_reward_q_learning(current_link_delay=link.delay)
 
         elif self._hops >= self.max_hops:
             # Hết hop mà chưa đến đích
             truncated = True
-            avg_util, avg_queue = self._path_avg_metrics()
-            reward = compute_final_reward(
-                path_found=False,
-                total_delay=self._total_delay,
-                dropped=False,
-                hops=self._hops,
-                utilization=avg_util,
-                avg_queue_util=avg_queue,
-            )
+            reward = -1 + compute_step_reward_q_learning(current_link_delay=link.delay)
 
         else:
             # Step trung gian: shaping reward dựa trên link vừa đi qua
-            reward = compute_shaping_reward(
-                current_link_delay=link.delay,
-                current_link_utilization=link.utilization,
-                current_link_queue_util=link.queue_util,
-            )
+            reward = compute_step_reward_q_learning(current_link_delay=link.delay)
 
         info = self._info()
         if self.render_mode == "human":

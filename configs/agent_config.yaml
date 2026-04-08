@@ -2,8 +2,8 @@ q_learning:
   alpha: 0.1          # learning rate
   gamma: 0.99         # discount factor
   epsilon: 1.0        # khởi đầu exploration
-  eps_min: 0.05       # epsilon tối thiểu
-  eps_decay: 0.995    # hệ số giảm epsilon mỗi step
+  eps_min: 0.1       # epsilon tối thiểu
+  eps_decay: 0.99999585    # hệ số giảm epsilon mỗi step
  
 training:
   num_episodes: 3000
