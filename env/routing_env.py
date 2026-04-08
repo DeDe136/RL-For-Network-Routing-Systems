@@ -21,7 +21,7 @@ from network.traffic_generator import TrafficGenerator
 from network.metrics import NetworkMetrics
 from env.spaces import make_observation_space, make_action_space, NUM_NODES
 # from env.reward import compute_final_reward, compute_shaping_reward
-from env.reward_q_learning import compute_final_reward_q_learning, compute_step_reward_q_learning
+from env.reward_q_learning import compute_step_reward_q_learning
 
 
 class NetworkRoutingEnv(gym.Env):
