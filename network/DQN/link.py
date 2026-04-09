@@ -1,5 +1,5 @@
 """
-network/link.py
+network/DQN/link.py
 
 Dataclass mô tả trạng thái một link — được dùng bởi NetworkTopology.
 File này giữ logic tính toán độc lập để dễ test.

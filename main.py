@@ -22,7 +22,7 @@ import numpy as np
 
 def run_env_check():
     from gymnasium.utils.env_checker import check_env
-    from env.routing_env import NetworkRoutingEnv
+    from env.Q_Learning.routing_env import NetworkRoutingEnv
 
     print("=" * 50)
     print("  Gymnasium env_checker")
@@ -54,7 +54,7 @@ def run_env_check():
 # ─────────────────────────────────────────────────────────────────────
 
 def run_train(episodes: int = None):
-    from scripts.train import main as train_main
+    from scripts.Q_Learning.train import main as train_main
     argv_backup = sys.argv[:]
     sys.argv = ["train.py"]
     if episodes:
@@ -68,7 +68,7 @@ def run_train(episodes: int = None):
 # ─────────────────────────────────────────────────────────────────────
 
 def run_eval(render: bool = False):
-    from scripts.evaluate import main as eval_main
+    from scripts.Q_Learning.evaluate import main as eval_main
     argv_backup = sys.argv[:]
     sys.argv = ["evaluate.py"]
     if render:
@@ -82,10 +82,10 @@ def run_eval(render: bool = False):
 # ─────────────────────────────────────────────────────────────────────
 
 def run_demo():
-    from agents.q_learning_delay import QLearningAgent
-    from network.topology import NetworkTopology
+    from agents.Q_Learning.ql_agent_for_delay import QLearningAgent
+    from network.Q_Learning.topology import NetworkTopology
 
-    ckpt = "checkpoints/qtable_final.npy"
+    ckpt = "checkpoints/Q_Learning/qtable_final.npy"
     if not os.path.exists(ckpt):
         print(f"Checkpoint không tìm thấy: {ckpt}")
         print("Chạy 'python main.py --mode train' trước.")

@@ -1,5 +1,5 @@
 """
-env/reward_q_learning.py
+env/Q_Learning/reward.py
 
 Hàm reward cho Q-learning dựa trên delay.
 """

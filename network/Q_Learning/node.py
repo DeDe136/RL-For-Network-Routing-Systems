@@ -1,5 +1,5 @@
 """
-network/node.py
+network/Q_Learning/node.py
 
 Router node với routing table và queue đơn giản.
 """
@@ -11,7 +11,7 @@ from typing import Dict
 @dataclass
 class Node:
     node_id: int
-    queue_capacity: int = 50    # packets
+    queue_capacity: int = 100    # packets
 
     _routing_table: Dict[int, int] = field(default_factory=dict, repr=False)
     _queue: int = 0

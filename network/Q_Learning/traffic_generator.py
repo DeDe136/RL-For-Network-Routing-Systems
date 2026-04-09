@@ -1,5 +1,5 @@
 """
-network/traffic_generator.py
+network/Q_Learning/traffic_generator.py
 
 Sinh traffic demand (src, dst, volume_mbps) theo từng step.
 """

@@ -1,11 +1,11 @@
 """
-scripts/train.py
+scripts/Q_Learning/train.py
 
 Training loop cho Q-Learning agent trên NetworkRouting-v0.
 
 Chạy:
-    python scripts/train.py
-    python scripts/train.py --episodes 5000
+    python scripts/Q_Learning/train.py
+    python scripts/Q_Learning/train.py --episodes 5000
 """
 
 import sys, os, argparse, yaml
@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import env  # noqa — kích hoạt gymnasium.register
 import gymnasium as gym
 
-from agents.q_learning_delay import QLearningAgent
+from agents.Q_Learning.ql_agent_for_delay import QLearningAgent
 from utils.logger import Logger
 
 
@@ -36,11 +36,12 @@ def main():
 
     num_episodes = args.episodes or tcfg["num_episodes"]
     ckpt_dir     = tcfg["checkpoint_dir"]
-    os.makedirs(ckpt_dir, exist_ok=True)
+    target_dir = os.path.join(ckpt_dir, "Q_Learning")
+    os.makedirs(target_dir, exist_ok=True)
 
     # Khởi tạo env
     environment = gym.make(
-        "NetworkRouting-v0",
+        "NetworkRouting-QL-v0",
         mean_traffic_mbps=ecfg["env"]["mean_traffic_mbps"],
         max_hops=ecfg["env"]["max_hops"],
         seed=ecfg["env"]["seed"],
@@ -53,8 +54,10 @@ def main():
     raw_env = environment.unwrapped
     agent.set_neighbor_mask(raw_env.topo.adj_matrix)
 
+    full_log_dir = os.path.join(tcfg["log_dir"], "Q_learning")
+    os.makedirs(full_log_dir, exist_ok=True)
     logger = Logger(
-        log_dir=tcfg["log_dir"],
+        log_dir=full_log_dir,
         print_every=tcfg["print_every"],
     )
 
@@ -95,13 +98,13 @@ def main():
         })
 
         if ep % tcfg["save_every"] == 0:
-            agent.save(os.path.join(ckpt_dir, f"qtable_ep{ep}.npy"))
+            agent.save(os.path.join(target_dir, f"qtable_ep{ep}.npy"))
 
     environment.close()
     logger.close()
 
     # Lưu checkpoint cuối
-    agent.save(os.path.join(ckpt_dir, "qtable_final.npy"))
+    agent.save(os.path.join(target_dir, "qtable_final.npy"))
 
     # In Q-table summary
     print()

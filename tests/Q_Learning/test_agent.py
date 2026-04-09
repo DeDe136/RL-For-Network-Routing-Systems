@@ -1,6 +1,6 @@
 """
-tests/test_agent.py
-pytest tests/test_agent.py -v
+tests/Q_Learning/test_agent.py
+pytest tests/Q_Learning/test_agent.py -v
 """
 
 import sys, os
@@ -10,8 +10,8 @@ import pytest
 import numpy as np
 import tempfile
 
-from agents.q_learning_delay import QLearningAgent
-from network.topology import NetworkTopology
+from agents.Q_Learning.ql_agent_for_delay import QLearningAgent
+from network.Q_Learning.topology import QLNetworkTopology
 
 
 NUM_NODES = 8
@@ -19,7 +19,7 @@ NUM_NODES = 8
 
 @pytest.fixture
 def agent():
-    topo = NetworkTopology()
+    topo = QLNetworkTopology()
     ag   = QLearningAgent(config={
         "alpha": 0.1, "gamma": 0.99,
         "epsilon": 1.0, "eps_min": 0.05, "eps_decay": 0.99,

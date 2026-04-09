@@ -1,6 +1,6 @@
 """
-tests/test_network.py
-pytest tests/test_network.py -v
+tests/Q_Learning/test_network.py
+pytest tests/Q_Learning/test_network.py -v
 """
 
 import sys, os
@@ -9,11 +9,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 import numpy as np
 
-from network.topology import NetworkTopology
-from network.traffic_generator import TrafficGenerator
-from network.metrics import NetworkMetrics
-from network.link import Link
-from network.node import Node
+from network.Q_Learning.topology import NetworkTopology
+from network.Q_Learning.traffic_generator import TrafficGenerator
+from network.Q_Learning.metrics import NetworkMetrics
+from network.Q_Learning.link import Link
+from network.Q_Learning.node import Node
 
 
 # ── Topology ──────────────────────────────────────────────────────────

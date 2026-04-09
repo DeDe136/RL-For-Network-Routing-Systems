@@ -1,6 +1,6 @@
 """
-tests/test_env.py
-pytest tests/test_env.py -v
+tests/Q_Learning/test_env.py
+pytest tests/Q_Learning/test_env.py -v
 """
 
 import sys, os
@@ -11,8 +11,8 @@ import numpy as np
 import gymnasium as gym
 
 import env  # noqa — đăng ký NetworkRouting-v0
-from env.routing_env import NetworkRoutingEnv
-from env.reward import compute_reward
+from env.Q_Learning.routing_env import NetworkRoutingEnv
+from env.Q_Learning.reward import compute_step_reward_q_learning
 
 
 # ── Fixture ───────────────────────────────────────────────────────────
@@ -166,30 +166,30 @@ class TestFullEpisode:
 # ── Reward function ───────────────────────────────────────────────────
 
 class TestReward:
-    def test_no_path_returns_minus_two(self):
-        r = compute_reward(0, False, 0, 0, path_found=False)
-        assert r == pytest.approx(-2.0)
+    def test_zero_delay_gives_zero_reward(self):
+        r = compute_step_reward_q_learning(0.0)
+        assert r == pytest.approx(0.0)
 
-    def test_perfect_path_near_one(self):
-        r = compute_reward(
-            total_delay=1.0, dropped=False, hops=1,
-            utilization=0.0, path_found=True
-        )
-        assert r > 0.5
+    def test_small_delay_near_zero(self):
+        r = compute_step_reward_q_learning(1.0)
+        assert -0.2 < r < 0.0  # gần 0 nhưng âm
 
-    def test_bad_path_lower_reward(self):
-        r_good = compute_reward(5.0,  False, 1, 0.1, True)
-        r_bad  = compute_reward(45.0, True,  6, 0.9, True)
-        assert r_good > r_bad
+    def test_reference_delay_equals_minus_one(self):
+        r = compute_step_reward_q_learning(10.0)
+        assert r == pytest.approx(-1.0)
 
-    def test_drop_reduces_reward(self):
-        r_no_drop = compute_reward(10.0, False, 3, 0.3, True)
-        r_drop    = compute_reward(10.0, True,  3, 0.3, True)
-        assert r_no_drop > r_drop
+    def test_large_delay_clipped_to_minus_one(self):
+        r = compute_step_reward_q_learning(50.0)
+        assert r == pytest.approx(-1.0)
 
-    def test_reward_bounded(self):
-        for delay in [0, 5, 50, 100]:
-            for dropped in [True, False]:
-                for hops in [1, 4, 8]:
-                    r = compute_reward(delay, dropped, hops, 0.5, True)
-                    assert -2.1 <= r <= 1.1
+    def test_reward_monotonic_with_delay(self):
+        r1 = compute_step_reward_q_learning(1.0)
+        r2 = compute_step_reward_q_learning(5.0)
+        r3 = compute_step_reward_q_learning(10.0)
+
+        assert r1 > r2 > r3  # delay tăng → reward giảm
+
+    def test_reward_bounds(self):
+        for d in [0, 1, 5, 10, 50, 100]:
+            r = compute_step_reward_q_learning(d)
+            assert -1.0 <= r <= 0.0

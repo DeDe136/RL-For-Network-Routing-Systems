@@ -4,9 +4,9 @@ scripts/evaluate.py
 Đánh giá Q-Learning agent đã train.
 
 Chạy:
-    python scripts/evaluate.py
-    python scripts/evaluate.py --checkpoint checkpoints/qtable_final.npy
-    python scripts/evaluate.py --checkpoint checkpoints/qtable_final.npy --episodes 100 --render
+    python scripts/Q_Learning/evaluate.py
+    python scripts/Q_Learning/evaluate.py --checkpoint checkpoints/Q_Learning/qtable_final.npy
+    python scripts/Q_Learning/evaluate.py --checkpoint checkpoints/Q_Learning/qtable_final.npy --episodes 100 --render
 """
 
 import sys, os, argparse, yaml
@@ -16,7 +16,7 @@ import numpy as np
 import env  # noqa
 import gymnasium as gym
 
-from agents.q_learning_delay import QLearningAgent
+from agents.Q_Learning.ql_agent_for_delay import QLearningAgent
 
 
 def load_cfg(path):
@@ -90,7 +90,7 @@ def evaluate(agent: QLearningAgent, environment, n_episodes: int, render: bool):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint",   default="checkpoints/qtable_final.npy")
+    parser.add_argument("--checkpoint",   default="checkpoints/Q_Learning/qtable_final.npy")
     parser.add_argument("--env-config",   default="configs/env_config.yaml")
     parser.add_argument("--agent-config", default="configs/agent_config.yaml")
     parser.add_argument("--episodes",     type=int, default=50)
@@ -101,7 +101,7 @@ def main():
     acfg = load_cfg(args.agent_config)
 
     environment = gym.make(
-        "NetworkRouting-v0",
+        "NetworkRouting-QL-v0",
         mean_traffic_mbps=ecfg["env"]["mean_traffic_mbps"],
         max_hops=ecfg["env"]["max_hops"],
         seed=ecfg["env"]["seed"] + 999,   # seed khác train

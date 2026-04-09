@@ -1,5 +1,5 @@
 """
-env/reward.py
+env/DQN/reward.py
 
 Hàm reward cho bài toán định tuyến.
 Mục tiêu: tối thiểu delay + drop, tối đa throughput.

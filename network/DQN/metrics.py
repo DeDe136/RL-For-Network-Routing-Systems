@@ -1,12 +1,12 @@
 """
-network/metrics.py
+network/DQN/metrics.py
 
 Tính throughput, latency, drop rate cho một path.
 """
 
 from typing import List, Dict
 import numpy as np
-from network.topology import NetworkTopology
+from network.Q_Learning.topology import NetworkTopology
 
 
 class NetworkMetrics:
@@ -23,7 +23,7 @@ class NetworkMetrics:
 
     def path_effective_delay(self, path: List[int]) -> float:
         """Delay thực tế bao gồm queuing (ms)."""
-        from network.link import Link as LinkDC
+        from network.Q_Learning.link import Link as LinkDC
         total = 0.0
         for i in range(len(path) - 1):
             attr = self.topo.link(path[i], path[i+1])
