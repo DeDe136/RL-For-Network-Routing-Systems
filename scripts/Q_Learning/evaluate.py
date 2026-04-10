@@ -112,7 +112,7 @@ def main():
 
     if not os.path.exists(args.checkpoint):
         print(f"Checkpoint not found: {args.checkpoint}")
-        print("Run 'python scripts/train.py' first.")
+        print("Run 'python scripts/Q_Learning/train.py' first.")
         return
 
     agent.load(args.checkpoint)
