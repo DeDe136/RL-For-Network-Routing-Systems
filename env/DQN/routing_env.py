@@ -15,8 +15,8 @@ import numpy as np
 import gymnasium as gym
 
 from network.DQN.topology import NetworkTopology
-from network.Q_Learning.traffic_generator import TrafficGenerator
-from network.Q_Learning.metrics import NetworkMetrics
+from network.DQN.traffic_generator import TrafficGenerator
+from network.DQN.metrics import NetworkMetrics
 from env.DQN.spaces import make_observation_space, make_action_space, NUM_NODES, obs_to_flat
 from env.DQN.reward import compute_final_reward, compute_shaping_reward
 
@@ -90,6 +90,15 @@ class NetworkRoutingEnv(gym.Env):
         terminated = False
         truncated  = False
 
+        # Kiểm tra link hợp lệ
+        if not self.topo.has_link(self._current_node, action):
+            # Chọn node không có link → phạt nhẹ, giữ nguyên vị trí
+            reward = -0.5
+            info = self._info()
+            if self.render_mode == "human":
+                self._render_step(action, reward, "invalid link")
+            return self._obs(), reward, terminated, truncated, info
+        
         # Di chuyển đến next_hop
         link = self.topo.link(self._current_node, action)
         self._total_delay += link.delay

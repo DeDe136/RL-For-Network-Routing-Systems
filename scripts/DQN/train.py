@@ -1,16 +1,17 @@
 """
-scripts/DQN/train.py
+scripts/DQN/dqn_train.py
 
-Vòng lặp huấn luyện cho DQN Agent trên môi trường NetworkRouting-v0.
+Training loop cho DQN Agent trên NetworkRouting-v0.
+
 Chạy:
-    python scripts/DQN/train.py
-    python scripts/DQN/train.py --episodes 5000
+    python scripts/DQN/dqn_train.py
+    python scripts/DQN/dqn_train.py --episodes 5000
 """
 
 import sys, os, argparse, yaml
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import env  # noqa - đăng ký environment
+import env  # noqa — kích hoạt gymnasium.register
 import gymnasium as gym
 
 from agents.DQN.dqn_agent import DQNAgent
@@ -38,24 +39,16 @@ def main():
     target_dir = os.path.join(ckpt_dir, "DQN")
     os.makedirs(target_dir, exist_ok=True)
 
-    # Khởi tạo môi trường
     environment = gym.make(
         "NetworkRouting-DQN-v0",
         mean_traffic_mbps=ecfg["env"]["mean_traffic_mbps"],
         max_hops=ecfg["env"]["max_hops"],
+        bg_intensity=ecfg["env"].get("bg_intensity", 0.3),
         seed=ecfg["env"]["seed"],
     )
 
-    # Khởi tạo DQN Agent
-    agent = DQNAgent(
-        n_states=1,            # không dùng trực tiếp
-        n_actions=8,           # NUM_NODES
-        config=acfg["dqn"]
-    )
-
-    # Thiết lập mặt nạ hàng xóm từ topology
-    raw_env = environment.unwrapped
-    agent.set_neighbor_mask(raw_env.topo.adj_matrix)
+    agent = DQNAgent(n_states=1, n_actions=8, config=acfg["dqn"])
+    agent.set_neighbor_mask(environment.unwrapped.topo.adj_matrix)
 
     full_log_dir = os.path.join(tcfg["log_dir"], "DQN")
     os.makedirs(full_log_dir, exist_ok=True)
@@ -64,61 +57,54 @@ def main():
         print_every=tcfg["print_every"],
     )
 
-    print(f"Huấn luyện DQN trên NetworkRouting-v0 (topology động) - {num_episodes} episodes")
-    print(f"Thiết bị: {agent.device}")
-    print()
+    print(f"Training DQN | {num_episodes} episodes | device={agent.device}")
+    print(f"  {agent.network_summary()}\n")
 
     for ep in range(1, num_episodes + 1):
         obs, _ = environment.reset()
         ep_reward = 0.0
-        steps = 0
-        done = False
-
-        # Agent mặc định ở chế độ huấn luyện
+        ep_loss   = 0.0
+        steps     = 0
+        done      = False
         agent.train_mode()
 
         while not done:
-            # Chọn hành động
             action = agent.select_action(obs)
-
-            next_obs, reward, terminated, truncated, info = environment.step(action)
+            next_obs, reward, terminated, truncated, info = \
+                environment.step(action)
             done = terminated or truncated
 
-            # Lưu transition vào bộ nhớ
             agent.remember(obs, action, reward, next_obs, done)
-
-            # Thực hiện bước học
-            loss_info = agent.update()
+            result = agent.update()
 
             ep_reward += reward
-            steps += 1
-            obs = next_obs
+            ep_loss   += result.get("loss") or 0.0
+            steps     += 1
+            obs        = next_obs
 
         logger.log({
             "reward":   ep_reward,
+            "loss":     ep_loss / max(steps, 1),
             "epsilon":  agent.epsilon,
             "hops":     info["hops"],
             "delay_ms": info["total_delay"],
             "dropped":  float(info["dropped"]),
             "avg_util": info["avg_utilization"],
+            "buf_size": len(agent.memory),
         })
 
-        if ep % tcfg["print_every"] == 0:
-            print(f"Episode {ep:4d} | Reward: {ep_reward:+.2f} | Epsilon: {agent.epsilon:.3f} | "
-                  f"Hops: {info['hops']} | Delay: {info['total_delay']:.1f}ms | Drop: {info['dropped']}")
-
         if ep % tcfg["save_every"] == 0:
-            agent.save(os.path.join(ckpt_dir, f"dqn_ep{ep}.pt"))
+            agent.save(os.path.join(target_dir, f"dqn_ep{ep}.pt"))
 
     environment.close()
     logger.close()
-    agent.save(os.path.join(ckpt_dir, "dqn_final.pt"))
+    agent.save(os.path.join(target_dir, "dqn_final.pt"))
 
-    # Demo chính sách tham lam sau huấn luyện
-    print("\n=== Đường đi tham lam sau huấn luyện ===")
-    agent.eval_mode()   # tắt exploration
-    for src, dst in [(0,7), (1,6), (2,5), (3,7), (0,5)]:
-        path = agent.best_path(src, dst, raw_env.topo)
+    print(f"\n{agent.network_summary()}")
+    print("\n=== Greedy paths sau training ===")
+    agent.eval_mode()
+    for src, dst in [(0, 7), (1, 6), (2, 5), (3, 7), (0, 5)]:
+        path = agent.best_path(src, dst, environment.unwrapped.topo)
         print(f"  {src} → {dst} : {path}")
 
 

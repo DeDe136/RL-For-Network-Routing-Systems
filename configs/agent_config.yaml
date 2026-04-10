@@ -8,7 +8,7 @@ q_learning:
  
 # Cấu hình cho DQN
 dqn:
-  input_dim: 132              # 2 node info + 26 cạnh * 5 đặc trưng
+  input_dim: 132           # 2 + 26 edges × 5 features
   hidden_dims: [128, 128]
   lr: 0.001
   gamma: 0.99
@@ -18,6 +18,7 @@ dqn:
   batch_size: 64
   buffer_capacity: 10000
   target_update_freq: 100
+  learn_start: 64          # bắt đầu học khi buffer có đủ 1 batch
 
 # Cấu hình huấn luyện chung
 training:

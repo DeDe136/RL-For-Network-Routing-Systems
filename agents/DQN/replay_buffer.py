@@ -33,7 +33,7 @@ class ReplayBuffer:
             next_state: Vector trạng thái kế tiếp.
             done: Cờ kết thúc episode.
         """
-        self.buffer.append((state, action, reward, next_state, done))
+        self.buffer.append((state, action, reward, next_state, float(done)))
 
     def sample(self, batch_size: int) -> Tuple[np.ndarray, np.ndarray,
                                                 np.ndarray, np.ndarray,
