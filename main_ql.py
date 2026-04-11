@@ -92,7 +92,7 @@ def run_demo():
         print("Chạy 'python main_ql.py --mode train' trước.")
         return
     
-    with open("configs/agent_config.yaml") as f:
+    with open("configs/agent_config.yaml", encoding="utf-8") as f:
         acfg = yaml.safe_load(f)
 
     topo  = NetworkTopology()
