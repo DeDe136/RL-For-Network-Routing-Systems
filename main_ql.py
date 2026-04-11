@@ -82,17 +82,21 @@ def run_eval(render: bool = False):
 # ─────────────────────────────────────────────────────────────────────
 
 def run_demo():
+    import yaml
     from agents.Q_Learning.ql_agent_for_delay import QLearningAgent
     from network.Q_Learning.topology import NetworkTopology
-
+    
     ckpt = "checkpoints/Q_Learning/qtable_final.npy"
     if not os.path.exists(ckpt):
         print(f"Checkpoint không tìm thấy: {ckpt}")
-        print("Chạy 'python main.py --mode train' trước.")
+        print("Chạy 'python main_ql.py --mode train' trước.")
         return
+    
+    with open("configs/agent_config.yaml") as f:
+        acfg = yaml.safe_load(f)
 
     topo  = NetworkTopology()
-    agent = QLearningAgent()
+    agent = QLearningAgent(config=acfg["q_learning"])
     agent.set_neighbor_mask(topo.adj_matrix)
     agent.load(ckpt)
     agent.eval_mode()

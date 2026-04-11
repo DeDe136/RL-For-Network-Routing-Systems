@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import env  # noqa — kích hoạt gymnasium.register
 import gymnasium as gym
+import numpy as np
 
 from agents.DQN.dqn_agent import DQNAgent
 from utils.logger import Logger
@@ -103,10 +104,11 @@ def main():
     print(f"\n{agent.network_summary()}")
     print("\n=== Greedy paths sau training ===")
     agent.eval_mode()
+    rng = np.random.default_rng(99)
     for src, dst in [(0, 7), (1, 6), (2, 5), (3, 7), (0, 5)]:
-        path = agent.best_path(src, dst, environment.unwrapped.topo)
+        volume = float(max(1.0, rng.poisson(10.0)))
+        path = agent.best_path(src, dst, environment.unwrapped.topo, volume)
         print(f"  {src} → {dst} : {path}")
-
 
 if __name__ == "__main__":
     main()

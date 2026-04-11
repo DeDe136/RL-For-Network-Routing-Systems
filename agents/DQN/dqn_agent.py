@@ -233,10 +233,30 @@ class DQNAgent(BaseAgent):
         return mask
 
     def best_path(self, src: int, dst: int, topo,
-                  max_hops: int = 10) -> List[int]:
+                  volume_mbps: float = 10.0,
+                  max_hops: int = 8) -> List[int]:
         """
-        Greedy rollout từ src → dst dùng q_net hiện tại.
-        Không tạo env — xây obs dict trực tiếp từ topo.
+        Greedy rollout từ src → dst theo MDP traffic model.
+
+        Mỗi bước:
+          1. Đọc link_states hiện tại (utilization, queue_util thay đổi thực tế).
+          2. Chọn next-hop theo greedy masked Q (tie-breaking random).
+          3. Gọi topo.send_traffic(path, volume, is_first_hop) — cập nhật
+             queue_used_cur, load, queue_used theo MDP spec.
+          4. Gọi topo.reduce_load(path) — chuyển load sang link tiếp theo
+             và decay link ngoài path (leaky bucket).
+
+        Link_states phản ánh trạng thái mạng thực sau mỗi hop, agent
+        phải đọc chúng thay vì chỉ nhớ (src, dst).
+
+        Args:
+            src, dst    : cặp node nguồn/đích.
+            topo        : NetworkTopology instance.
+            volume_mbps : lưu lượng gửi qua mỗi link.
+            max_hops    : giới hạn hop để tránh vòng lặp vô hạn.
+
+        Returns:
+            List[int]: path từ src đến dst (bao gồm src).
         """
         was_training = self.training
         self.eval_mode()
@@ -244,10 +264,13 @@ class DQNAgent(BaseAgent):
         path    = [src]
         visited = {src}
         cur     = src
+        hops    = 0
 
         for _ in range(max_hops):
             if cur == dst:
                 break
+
+            # Đọc link_states sau khi traffic bước trước đã cập nhật
             obs = {
                 "current_node": cur,
                 "dst_node":     dst,
@@ -258,12 +281,28 @@ class DQNAgent(BaseAgent):
                      if a not in visited]
             if not valid:
                 break
+
             q_vals    = self._masked_q_values(obs_to_flat(obs), cur)
             max_q        = np.max(q_vals[valid])
             best_actions = valid[q_vals[valid] == max_q]
             nxt       = int(np.random.choice(best_actions))
+
             path.append(nxt)
             visited.add(nxt)
+            hops += 1
+
+            # send_traffic theo MDP model:
+            # is_first_hop=True chỉ ở hop đầu tiên (cộng volume vào queue)
+            is_first_hop = (hops == 1)
+            topo.send_traffic(
+                path        = path,
+                volume_mbps = volume_mbps,
+                is_first_hop= is_first_hop,
+            )
+
+            # reduce_load: leaky bucket trên path + decay ngoài path
+            topo.reduce_load(path)
+
             cur = nxt
 
         self.training = was_training

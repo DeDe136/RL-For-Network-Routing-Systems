@@ -18,13 +18,15 @@ class ReplayBuffer:
         capacity (int): Số lượng transition tối đa có thể lưu trữ.
     """
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int = 10000):
         self.buffer = deque(maxlen=capacity)
 
     def push(self, state: np.ndarray, action: int, reward: float,
              next_state: np.ndarray, done: bool) -> None:
         """
-        Thêm một transition mới vào bộ đệm.
+        Thêm transition vào buffer theo cơ chế FIFO:
+        - Nếu buffer đã đầy (len == capacity) → bỏ phần tử đầu tiên (cũ nhất).
+        - Sau đó push phần tử mới vào cuối.
 
         Tham số:
             state: Vector trạng thái đã làm phẳng.
@@ -33,6 +35,12 @@ class ReplayBuffer:
             next_state: Vector trạng thái kế tiếp.
             done: Cờ kết thúc episode.
         """
+
+        # Trước khi push: nếu đầy thì bỏ phần tử đầu tiên
+        if len(self.buffer) == self.capacity:
+            self.buffer.popleft()
+        
+        # Push transition mới vào cuối
         self.buffer.append((state, action, reward, next_state, float(done)))
 
     def sample(self, batch_size: int) -> Tuple[np.ndarray, np.ndarray,
@@ -60,3 +68,11 @@ class ReplayBuffer:
     def __len__(self) -> int:
         """Số lượng transition hiện có trong bộ đệm."""
         return len(self.buffer)
+    
+    @property
+    def is_full(self) -> bool:
+        return len(self.buffer) == self.capacity
+
+    @property
+    def fill_ratio(self) -> float:
+        return len(self.buffer) / self.capacity
