@@ -20,7 +20,7 @@ from agents.DQN.dqn_agent import DQNAgent
 
 
 def load_cfg(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

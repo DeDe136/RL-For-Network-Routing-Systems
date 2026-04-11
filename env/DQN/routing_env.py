@@ -3,11 +3,27 @@ env/DQN/routing_env.py
 
 NetworkRoutingEnv — môi trường Gymnasium định tuyến mạng 8 node.
 
-Điểm khác biệt so với Q-learning:
-  - reset() gọi step_background() để tạo trạng thái mạng ngẫu nhiên
-    mỗi episode — DQN phải học dựa vào link_states thực tế.
-  - step() gọi decay_load() sau mỗi bước để load không tích lũy mãi.
-  - obs_to_flat() dùng để chuẩn bị input cho DQN network.
+Vòng lặp một episode:
+  reset() → randomize_links + step_background → sinh demand (src,dst,vol)
+  step(action) lặp lại:
+    1. Di chuyển cur → action.
+    2. send_traffic([...path...], volume, is_first_hop) — MDP model.
+    3. reduce_load(path) — leaky bucket trên path + decay ngoài path.
+    4. Tính reward từ trạng thái link vừa đi qua.
+    5. Kiểm tra terminated / truncated.
+
+Điều kiện kết thúc (if/elif — chỉ một True mỗi bước):
+  dropped             → truncated, phạt nặng
+  current_node == dst → terminated, thưởng
+  hops >= max_hops    → truncated, phạt
+
+Observation (dict):
+  current_node : int
+  dst_node     : int
+  link_states  : (26, 5) — delay_norm, bw_norm, queue_size_cur_norm,
+                            utilization, queue_util
+
+obs_to_flat() → shape (132,) = 2 + 26×5 — input cho DQN.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -27,17 +43,17 @@ class NetworkRoutingEnv(gym.Env):
     def __init__(
         self,
         mean_traffic_mbps: float = 10.0,
-        max_hops: int = 8,
-        bg_intensity: float = 0.3,   # cường độ background traffic [0,1]
-        render_mode: Optional[str] = None,
-        seed: int = 42,
+        max_hops:          int   = 8,
+        bg_intensity:      float = 0.3,
+        render_mode:       Optional[str] = None,
+        seed:              int   = 42,
     ):
         super().__init__()
         self.max_hops     = max_hops
         self.bg_intensity = bg_intensity
         self.render_mode  = render_mode
 
-        rng = np.random.default_rng(seed)
+        rng          = np.random.default_rng(seed)
         self.topo    = NetworkTopology(rng=rng)
         self.traffic = TrafficGenerator(mean_mbps=mean_traffic_mbps, seed=seed)
         self.metrics = NetworkMetrics(self.topo)
@@ -45,14 +61,15 @@ class NetworkRoutingEnv(gym.Env):
         self.observation_space = make_observation_space(self.topo.num_edges())
         self.action_space      = make_action_space()
 
-        self._src: int = 0
-        self._dst: int = 7
-        self._volume: float = 10.0
-        self._current_node: int = 0
-        self._path: List[int] = []
-        self._hops: int = 0
-        self._total_delay: float = 0.0
-        self._dropped: bool = False
+        # Episode state
+        self._src:          int   = 0
+        self._dst:          int   = 7
+        self._volume:       float = 10.0
+        self._current_node: int   = 0
+        self._path:         List[int] = []
+        self._hops:         int   = 0
+        self._total_delay:  float = 0.0
+        self._dropped:      bool  = False
 
     # ------------------------------------------------------------------ #
     #  Gymnasium API                                                       #
@@ -60,7 +77,7 @@ class NetworkRoutingEnv(gym.Env):
 
     def reset(
         self,
-        seed: Optional[int] = None,
+        seed:    Optional[int]  = None,
         options: Optional[Dict] = None,
     ) -> Tuple[Dict, Dict]:
         super().reset(seed=seed)
@@ -70,17 +87,15 @@ class NetworkRoutingEnv(gym.Env):
         if seed is not None:
             self.traffic.reset(seed=seed)
 
-        # Tạo background traffic ngẫu nhiên để trạng thái mạng
-        # mỗi episode bắt đầu khác nhau — DQN phải đọc link_states
-        # thực tế thay vì chỉ dựa vào (current_node, dst).
+        # Background traffic để tạo trạng thái khởi đầu đa dạng
         self.topo.step_background(intensity=self.bg_intensity)
 
         self._src, self._dst, self._volume = self.traffic.generate()
         self._current_node = self._src
-        self._path = [self._src]
-        self._hops = 0
-        self._total_delay = 0.0
-        self._dropped = False
+        self._path         = [self._src]
+        self._hops         = 0
+        self._total_delay  = 0.0
+        self._dropped      = False
 
         return self._obs(), {}
 
@@ -90,75 +105,72 @@ class NetworkRoutingEnv(gym.Env):
         terminated = False
         truncated  = False
 
-        # Kiểm tra link hợp lệ
-        if not self.topo.has_link(self._current_node, action):
-            # Chọn node không có link → phạt nhẹ, giữ nguyên vị trí
-            reward = -0.5
-            info = self._info()
-            if self.render_mode == "human":
-                self._render_step(action, reward, "invalid link")
-            return self._obs(), reward, terminated, truncated, info
-        
-        # Di chuyển đến next_hop
+        # Lưu link vừa đi qua (để dùng cho shaping reward)
         link = self.topo.link(self._current_node, action)
-        self._total_delay += link.delay
-        self._hops += 1
-        self._current_node = action
+
+        # Di chuyển đến next_hop
+        self._hops         += 1
+        self._current_node  = action
         self._path.append(action)
 
-        # Gửi traffic trên link vừa đi qua
+        # ── send_traffic theo MDP model ───────────────────────────────
+        is_first_hop = (self._hops == 1)
         result = self.topo.send_traffic(
-            [self._path[-2], self._path[-1]], self._volume
+            path         = self._path,
+            volume_mbps  = self._volume,
+            is_first_hop = is_first_hop,
         )
+        self._total_delay += result["total_delay"]
         if result["dropped"]:
             self._dropped = True
 
-        # Decay load sau mỗi hop — mô phỏng leaky bucket
-        self.topo.decay_load()
+        # ── reduce_load (leaky bucket) ────────────────────────────────
+        self.topo.reduce_load(self._path)
 
-        # Metrics trên path hiện tại
+        # ── Tính reward ───────────────────────────────────────────────
+        # Đọc sau reduce_load để reward phản ánh trạng thái sau cập nhật
         avg_util, avg_queue = self._path_avg_metrics()
 
-        # ── Điều kiện kết thúc (if/elif: chỉ một True mỗi bước) ──────
+        # Điều kiện kết thúc — if/elif đảm bảo chỉ 1 True mỗi bước
         if self._dropped:
             truncated = True
             reward = compute_final_reward(
-                path_found=False,
-                total_delay=self._total_delay,
-                dropped=True,
-                hops=self._hops,
-                utilization=avg_util,
-                avg_queue_util=avg_queue,
+                path_found     = False,
+                total_delay    = self._total_delay,
+                dropped        = True,
+                hops           = self._hops,
+                utilization    = avg_util,
+                avg_queue_util = avg_queue,
             )
 
         elif self._current_node == self._dst:
             terminated = True
             reward = compute_final_reward(
-                path_found=True,
-                total_delay=self._total_delay,
-                dropped=False,
-                hops=self._hops,
-                utilization=avg_util,
-                avg_queue_util=avg_queue,
+                path_found     = True,
+                total_delay    = self._total_delay,
+                dropped        = False,
+                hops           = self._hops,
+                utilization    = avg_util,
+                avg_queue_util = avg_queue,
             )
 
         elif self._hops >= self.max_hops:
             truncated = True
             reward = compute_final_reward(
-                path_found=False,
-                total_delay=self._total_delay,
-                dropped=False,
-                hops=self._hops,
-                utilization=avg_util,
-                avg_queue_util=avg_queue,
+                path_found     = False,
+                total_delay    = self._total_delay,
+                dropped        = False,
+                hops           = self._hops,
+                utilization    = avg_util,
+                avg_queue_util = avg_queue,
             )
 
         else:
-            # Shaping reward dựa trên link vừa đi qua
+            # Shaping reward: dùng trạng thái link vừa đi qua
             reward = compute_shaping_reward(
-                current_link_delay=link.delay,
-                current_link_utilization=link.utilization,
-                current_link_queue_util=link.queue_util,
+                current_link_delay       = link.delay,
+                current_link_utilization = link.utilization,
+                current_link_queue_util  = link.queue_util,
             )
 
         info = self._info()
@@ -178,7 +190,7 @@ class NetworkRoutingEnv(gym.Env):
             print(
                 f"  demand={self._src}→{self._dst} "
                 f"({self._volume:.1f}Mbps) | "
-                f"path={self._path} | delay={self._total_delay:.1f}ms | "
+                f"path={self._path} | delay={self._total_delay:.2f}ms | "
                 f"drop={self._dropped}"
             )
 
@@ -190,17 +202,21 @@ class NetworkRoutingEnv(gym.Env):
     # ------------------------------------------------------------------ #
 
     def flat_obs(self) -> np.ndarray:
-        """Flat vector để làm input cho DQN network."""
+        """Flat vector (132,) — input cho DQN network."""
         return obs_to_flat(self._obs())
 
     def _path_avg_metrics(self) -> Tuple[float, float]:
         """(avg_utilization, avg_queue_util) trên path hiện tại."""
         if len(self._path) < 2:
             return 0.0, 0.0
-        links = [self.topo.link(self._path[i], self._path[i + 1])
-                 for i in range(len(self._path) - 1)]
-        return (float(np.mean([lk.utilization for lk in links])),
-                float(np.mean([lk.queue_util  for lk in links])))
+        links = [
+            self.topo.link(self._path[i], self._path[i + 1])
+            for i in range(len(self._path) - 1)
+        ]
+        return (
+            float(np.mean([lk.utilization for lk in links])),
+            float(np.mean([lk.queue_util  for lk in links])),
+        )
 
     def _obs(self) -> Dict:
         return {

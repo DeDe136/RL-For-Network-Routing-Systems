@@ -20,7 +20,7 @@ from agents.Q_Learning.ql_agent_for_delay import QLearningAgent
 
 
 def load_cfg(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

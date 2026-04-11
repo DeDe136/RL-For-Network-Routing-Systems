@@ -1,4 +1,8 @@
 env:
   mean_traffic_mbps: 10.0
   max_hops: 8
+  bg_intensity: 0.3     # cường độ background traffic [0,1]
+                        # 0.0 = không có nền (giống Q-learning cũ)
+                        # 0.3 = trung bình, link bị thêm tối đa 30% bw
+                        # 0.6 = tắc nghẽn cao, thử nghiệm robustness
   seed: 42
