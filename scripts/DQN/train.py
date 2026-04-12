@@ -108,7 +108,7 @@ def main():
     for src, dst in [(0, 7), (1, 6), (2, 5), (3, 7), (0, 5)]:
         volume = float(max(1.0, rng.poisson(10.0)))
         path = agent.best_path(src, dst, environment.unwrapped.topo, volume)
-        print(f"  {src} → {dst} : {path}")
+        print(f"  {src} → {dst} | Volume: {volume:4.1f} | Path: {path}")
 
 if __name__ == "__main__":
     main()

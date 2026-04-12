@@ -19,6 +19,7 @@ class ReplayBuffer:
     """
 
     def __init__(self, capacity: int = 10000):
+        self.capacity = capacity
         self.buffer = deque(maxlen=capacity)
 
     def push(self, state: np.ndarray, action: int, reward: float,

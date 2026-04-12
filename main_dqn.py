@@ -15,6 +15,10 @@ import env  # noqa
 import gymnasium as gym
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  Env check
+# ─────────────────────────────────────────────────────────────────────
+
 def run_env_check():
     from gymnasium.utils.env_checker import check_env
     from env.DQN.routing_env import NetworkRoutingEnv
@@ -47,6 +51,10 @@ def run_env_check():
     e2.close()
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  Train
+# ─────────────────────────────────────────────────────────────────────
+
 def run_train(episodes: int = None):
     from scripts.DQN.train import main as train_main
     argv_backup = sys.argv[:]
@@ -57,6 +65,10 @@ def run_train(episodes: int = None):
     sys.argv = argv_backup
 
 
+# ─────────────────────────────────────────────────────────────────────
+#  Eval
+# ─────────────────────────────────────────────────────────────────────
+
 def run_eval(checkpoint: str, render: bool = False):
     from scripts.DQN.evaluate import main as eval_main
     argv_backup = sys.argv[:]
@@ -66,6 +78,10 @@ def run_eval(checkpoint: str, render: bool = False):
     eval_main()
     sys.argv = argv_backup
 
+
+# ─────────────────────────────────────────────────────────────────────
+#  Demo: greedy path hiển thị Q-values
+# ─────────────────────────────────────────────────────────────────────
 
 def run_demo(checkpoint: str):
     import yaml, numpy as np
@@ -93,8 +109,8 @@ def run_demo(checkpoint: str):
     print(f"  {agent.network_summary()}\n")
 
     pairs = [(0,7),(1,7),(2,7),(3,7),(0,5),(0,6),(1,4),(2,5)]
-    print(f"  {'Pair':<8} {'DQN Path':<35} {'SP Path':<35}")
-    print("  " + "-" * 78)
+    print(f"  {'Pair':<8} {'DQN Path':<35} {'SP Path':<35} {'Volume':<10}")
+    print("  " + "-" * 88)
 
     rng = np.random.default_rng(99)
     for src, dst in pairs:
@@ -104,8 +120,10 @@ def run_demo(checkpoint: str):
         match    = "✓" if dqn_path == sp_path else "≠"
         dqn_str  = " → ".join(map(str, dqn_path))
         sp_str   = " → ".join(map(str, sp_path))
-        print(f"  {src}→{dst}  {match}  {dqn_str:<33}  {sp_str}")
+        print(f"  {src}→{dst}  {match}  {dqn_str:<35}  {sp_str:<35}  {volume}")
 
+
+# ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

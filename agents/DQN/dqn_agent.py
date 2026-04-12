@@ -279,7 +279,8 @@ class DQNAgent(BaseAgent):
             valid = [a for a in
                      np.where(self.neighbor_mask[cur] > 0)[0]
                      if a not in visited]
-            if not valid:
+            valid = np.array(valid)
+            if len(valid) == 0:
                 break
 
             q_vals    = self._masked_q_values(obs_to_flat(obs), cur)

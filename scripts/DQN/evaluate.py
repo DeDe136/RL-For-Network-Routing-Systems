@@ -1,5 +1,5 @@
 """
-scripts/evaluate.py
+scripts/DQN/evaluate.py
 
 Đánh giá DQN agent đã train trên NetworkRouting-v0.
 
@@ -73,9 +73,11 @@ def run_evaluate(agent: DQNAgent, environment, n_episodes: int,
     print("=" * W)
 
     raw = environment.unwrapped
+    rng = np.random.default_rng(99)
     print("\n  Greedy paths (eval mode):")
     for src, dst in [(0, 7), (1, 6), (2, 5), (3, 7), (4, 6), (0, 4)]:
-        path = agent.best_path(src, dst, raw.topo)
+        volume = float(max(1.0, rng.poisson(10.0)))
+        path = agent.best_path(src, dst, raw.topo, volume)
         print(f"    {src} → {dst} : {path}")
 
     return {
