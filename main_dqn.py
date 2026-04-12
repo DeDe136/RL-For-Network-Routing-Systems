@@ -112,15 +112,62 @@ def run_demo(checkpoint: str):
     print(f"  {'Pair':<8} {'DQN Path':<35} {'SP Path':<35} {'Volume':<10}")
     print("  " + "-" * 88)
 
+    pair_labels = []
+    ql_delays = []
+    sp_delays = []
+
     rng = np.random.default_rng(99)
+
     for src, dst in pairs:
         volume = float(max(1.0, rng.poisson(10.0)))
         dqn_path = agent.best_path(src, dst, topo, volume)
         sp_path  = topo.shortest_path(src, dst)
+
+        ql_delay = sum(topo.link(dqn_path[i], dqn_path[i+1]).delay
+                       for i in range(len(dqn_path)-1)) if len(dqn_path)>1 else 0
+        sp_delay = sum(topo.link(sp_path[i], sp_path[i+1]).delay
+                       for i in range(len(sp_path)-1)) if len(sp_path)>1 else 0
+
+        pair_labels.append(f"{src}-{dst}")
+        ql_delays.append(ql_delay)
+        sp_delays.append(sp_delay)
+
         match    = "✓" if dqn_path == sp_path else "≠"
         dqn_str  = " → ".join(map(str, dqn_path))
         sp_str   = " → ".join(map(str, sp_path))
         print(f"  {src}→{dst}  {match}  {dqn_str:<35}  {sp_str:<35}  {volume}")
+
+    try:
+        import matplotlib.pyplot as plt
+
+        x = np.arange(len(pair_labels))
+        width = 0.35
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        rects1 = ax.bar(x - width/2, ql_delays, width, label='DQN')
+        rects2 = ax.bar(x + width/2, sp_delays, width, label='OSPF')
+
+        ax.set_xlabel('Node pair')
+        ax.set_ylabel('Total delay (ms)')
+        ax.set_title('So sánh độ trễ DQN vs OSPF theo cặp nguồn-đích')
+        ax.set_xticks(x)
+        ax.set_xticklabels(pair_labels)
+        ax.legend()
+        ax.grid(axis='y', linestyle='--', alpha=0.4)
+
+        for rect in rects1 + rects2:
+            height = rect.get_height()
+            ax.annotate(f'{height:.0f}',
+                        xy=(rect.get_x() + rect.get_width() / 2, height),
+                        xytext=(0, 3),
+                        textcoords='offset points',
+                        ha='center', va='bottom', fontsize=8)
+
+        plt.tight_layout()
+        plt.show()
+    except ImportError:
+        print('\nMatplotlib chưa được cài đặt, không thể hiển thị biểu đồ.')
+        print('Cài đặt bằng: pip install matplotlib')
 
 
 # ─────────────────────────────────────────────────────────────────────
