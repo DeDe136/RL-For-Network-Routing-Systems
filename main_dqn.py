@@ -1,5 +1,5 @@
 """
-main.py — Entry point cho DQN routing project.
+main_dqn.py — Entry point cho DQN routing project.
 
 Chạy:
     python main_dqn.py                    # kiểm tra env

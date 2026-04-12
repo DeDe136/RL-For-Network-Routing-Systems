@@ -125,7 +125,9 @@ class NetworkRoutingEnv(gym.Env):
             self._dropped = True
 
         # ── reduce_load (leaky bucket) ────────────────────────────────
-        self.topo.reduce_load(self._path)
+        is_drop = self.topo.reduce_load(self._path)
+        if is_drop:
+            self._dropped = True
 
         # ── Tính reward ───────────────────────────────────────────────
         # Đọc sau reduce_load để reward phản ánh trạng thái sau cập nhật

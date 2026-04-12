@@ -255,7 +255,7 @@ class NetworkTopology:
     #  reduce_load — leaky bucket trên path                               #
     # ------------------------------------------------------------------ #
 
-    def reduce_load(self, path: List[int], decay: float = 0.85):
+    def reduce_load(self, path: List[int], decay: float = 0.85) -> bool:
         """
         Sau mỗi step, xử lý tuần tự từng link trong path (trái→phải),
         sau đó decay load các link ngoài path.
@@ -265,6 +265,7 @@ class NetworkTopology:
             decay: hệ số giảm load cho link ngoài path [0,1].
         """
         path_links = set()
+        dropped = False
 
         if len(path) >= 2:
             for idx in range(len(path) - 1):
@@ -286,6 +287,7 @@ class NetworkTopology:
                 if attr.load != 0:
                     if has_next:
                         next_attr.queue_used_cur += attr.load
+                        dropped = next_attr.queue_used_cur > next_attr.queue_size_cur
                     attr.load = 0.0
 
                 # ── Phần B: xử lý queue_used_cur còn lại ──────────────
@@ -307,6 +309,8 @@ class NetworkTopology:
                 attr.load           = attr.load           * decay
                 attr.queue_used_cur = attr.queue_used_cur * decay
                 attr.queue_used     = attr.queue_used     * decay
+        
+        return dropped
 
     # ------------------------------------------------------------------ #
     #  Background traffic                                                  #
