@@ -166,6 +166,7 @@ def run_demo(checkpoint: str):
                 "queue_size_cur": lk.queue_size_cur,
                 "queue_used_cur": lk.queue_used_cur,
                 "queue_util":     lk.queue_util,
+                "dropped_data": lk.dropped_data,
             })
         return details
 
@@ -181,9 +182,10 @@ def run_demo(checkpoint: str):
             "path":            path,
             "hops":            len(path) - 1,
             "total_delay":     sum(d["delay"] for d in details),
-            "dropped":         False,
+            "dropped":         True if any(d["dropped_data"] > 0 for d in details) else False,
             "avg_utilization": avg_metric(details, "utilization"),
             "avg_queue_util":  avg_metric(details, "queue_util"),
+            "total_dropped_data": sum(d["dropped_data"] for d in details),
             "link_details":    details,
             **topo_ref.summary(),
         }

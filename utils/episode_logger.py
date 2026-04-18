@@ -15,6 +15,7 @@ Mỗi hàng CSV là 1 episode với đầy đủ thông tin:
     reward         : reward tổng episode (để trống nếu không có — demo/OSPF)
     avg_utilization : utilization băng thông trung bình trên path
     avg_queue_util  : queue_util trung bình trên path
+    total_dropped_data: tổng data bị drop trên cả đường đi
 
   Cột per-link (lặp lại cho mỗi link, indexed từ 0 đến max_hops-1):
     link{i}_nodes          : "u→v"
@@ -25,6 +26,7 @@ Mỗi hàng CSV là 1 episode với đầy đủ thông tin:
     link{i}_queue_size_cur : kích thước hàng đợi (packets)
     link{i}_queue_used_cur : hàng đợi đang dùng (packets)
     link{i}_queue_util     : queue_used_cur / queue_size_cur
+    link{i}_dropped_data   : data bị drop tích lũy trên link (packets)
 
 Ghi chú:
   - Header được tạo lần đầu tiên log_episode() được gọi.
@@ -48,6 +50,7 @@ class EpisodeLogger:
         "queue_size_cur",
         "queue_used_cur",
         "queue_util",
+        "dropped_data",   # lượng data bị drop tích lũy trên link (packets)
     ]
 
     def __init__(self, log_dir: str, filename: str, max_hops: int = 8):
@@ -79,6 +82,7 @@ class EpisodeLogger:
             "reward",
             "avg_utilization",
             "avg_queue_util",
+            "total_dropped_data",
         ]
         for i in range(self.max_hops):
             for f in self.LINK_FIELDS:
@@ -133,8 +137,9 @@ class EpisodeLogger:
             "total_delay_ms":  f"{info.get('total_delay', 0.0):.4f}",
             "dropped":         int(info.get("dropped", False)),
             "reward":          f"{reward:.4f}" if reward is not None else "",
-            "avg_utilization": f"{info.get('avg_utilization', 0.0):.4f}",
-            "avg_queue_util":  f"{info.get('avg_queue_util', 0.0):.4f}",
+            "avg_utilization":     f"{info.get('avg_utilization', 0.0):.4f}",
+            "avg_queue_util":      f"{info.get('avg_queue_util', 0.0):.4f}",
+            "total_dropped_data":  f"{info.get('total_dropped_data', 0.0):.4f}",
         }
 
         # Per-link columns (padded đến max_hops với chuỗi rỗng)
@@ -149,6 +154,7 @@ class EpisodeLogger:
                 row[f"link{i}_queue_size_cur"] = f"{lk['queue_size_cur']:.0f}"
                 row[f"link{i}_queue_used_cur"] = f"{lk['queue_used_cur']:.4f}"
                 row[f"link{i}_queue_util"]     = f"{lk['queue_util']:.4f}"
+                row[f"link{i}_dropped_data"]  = f"{lk.get('dropped_data', 0.0):.4f}"
             else:
                 for f in self.LINK_FIELDS:
                     row[f"link{i}_{f}"] = ""

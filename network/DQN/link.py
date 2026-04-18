@@ -3,22 +3,28 @@ network/DQN/link.py
 
 Dataclass mô tả trạng thái một link theo MDP spec.
 
-Mỗi link có 6 thông số:
+7 thông số:
   - delay          : propagation delay (ms)
   - bandwidth      : băng thông tối đa (Mbps)
-  - queue_size_cur : kích thước hàng đợi của node hiện tại (đầu gửi)
-  - queue_used_cur : lượng hàng đợi đang dùng ở node hiện tại
-  - queue_used     : lượng dữ liệu đã truyền qua đầu bên kia của link
+  - queue_size_cur : kích thước hàng đợi tại node gửi (packets)
+  - queue_used_cur : lượng hàng đợi đang dùng ở node gửi
+  - queue_used     : lượng đã truyền sang node nhận (Mbps)
   - load           : mức tải hiện tại trên link (Mbps)
+  - dropped_data   : tổng lượng dữ liệu bị drop trên link (packets)
+                     Tích lũy trong episode. Reset về 0 mỗi episode.
+                     Tăng khi queue_used_cur > queue_size_cur:
+                       dropped_data += (queue_used_cur - queue_size_cur)
+                       queue_used_cur = queue_size_cur  (giới hạn tại capacity)
 
-link_state_vector() expose 5 thông số đã chuẩn hóa:
-  [delay_norm, bw_norm, queue_size_cur_norm, utilization, queue_util]
+link_state_vector() expose 6 thông số đã chuẩn hóa:
+  [delay_norm, bw_norm, queue_size_cur_norm, utilization, queue_util, drop_norm]
   trong đó:
     utilization = load / bandwidth
     queue_util  = queue_used_cur / queue_size_cur
+    drop_norm   = dropped_data / DROP_NORM_MAX   (chuẩn hóa)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -27,10 +33,11 @@ class LinkAttr:
     bandwidth:      float   # Mbps
     queue_size_cur: int     # packets — kích thước hàng đợi tại node gửi
 
-    # Trạng thái thay đổi theo traffic
-    queue_used_cur: float = 0.0   # hàng đợi đang dùng ở node gửi (packets)
+    # Trạng thái thay đổi theo traffic (reset mỗi episode)
+    queue_used_cur: float = 0.0   # hàng đợi đang dùng ở node gửi
     queue_used:     float = 0.0   # lượng đã truyền sang node nhận (Mbps)
     load:           float = 0.0   # băng thông đang dùng (Mbps)
+    dropped_data:   float = 0.0   # tổng lượng data bị drop (packets, tích lũy)
 
     # ── Properties ────────────────────────────────────────────────────
 
@@ -62,3 +69,4 @@ class LinkAttr:
         self.queue_used_cur = 0.0
         self.queue_used     = 0.0
         self.load           = 0.0
+        self.dropped_data   = 0.0

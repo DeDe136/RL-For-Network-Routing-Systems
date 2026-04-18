@@ -11,7 +11,7 @@ import numpy as np
 import tempfile
 
 from agents.Q_Learning.ql_agent_for_delay import QLearningAgent
-from network.Q_Learning.topology import QLNetworkTopology
+from network.Q_Learning.topology import NetworkTopology
 
 
 NUM_NODES = 8
@@ -19,7 +19,7 @@ NUM_NODES = 8
 
 @pytest.fixture
 def agent():
-    topo = QLNetworkTopology()
+    topo = NetworkTopology()
     ag   = QLearningAgent(config={
         "alpha": 0.1, "gamma": 0.99,
         "epsilon": 1.0, "eps_min": 0.05, "eps_decay": 0.99,

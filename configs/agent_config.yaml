@@ -8,7 +8,7 @@ q_learning:
  
 # Cấu hình cho DQN
 dqn:
-  input_dim: 132           # 2 + 26 edges × 5 features
+  input_dim: 158           # 2 + 26 edges × 6 features
   hidden_dims: [128, 128]
   lr: 0.001
   gamma: 0.99

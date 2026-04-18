@@ -1,78 +1,84 @@
 """
-env/reward.py
+env/DQN/reward.py
 
 Hàm reward cho bài toán định tuyến mạng.
 
 Thứ tự ưu tiên (trọng số giảm dần):
-  delay           > avg_queue_util  > utilization  > hops
+  dropped_data > delay > avg_queue_util > utilization > hops
 
-  delay          : 0.35  — ưu tiên cao nhất (QoS quan trọng nhất)
-  avg_queue_util : 0.25  — tránh đầy hàng đợi → drop
-  utilization    : 0.20  — tránh nghẽn băng thông
-  hops           : 0.10  — ít hop hơn tốt hơn
+  dropped_data   : 0.30  — ưu tiên cao nhất, tránh data bị drop
+  delay          : 0.22  
+  avg_queue_util : 0.13  — tránh đầy hàng đợi
+  utilization    : 0.12  — tránh nghẽn băng thông
+  hops           : 0.08  — ít hop hơn tốt hơn
 
-Tie-breaker (khi util/queue_util bằng nhau):
-  bandwidth_bonus   : +0.05  — link bw lớn → còn nhiều capacity
-  queue_size_bonus  : +0.05  — queue lớn → ít bị drop hơn
+Phạt dropped_data (lượng data bị drop tích lũy trên path):
+  dropped_data_penalty : 0.30  — phạt theo tổng data bị drop
+  Cách tính: penalty = min(1.0, total_dropped / DROP_PENALTY_SCALE) × 0.30
 
-Tổng hệ số phạt : 0.35 + 0.25 + 0.20 + 0.10 = 0.90
-Tổng bonus tối đa: 0.05 + 0.05 = 0.10
-→ reward ∈ [-2.0, +1.10] thực tế ≈ [-2.0, +1.0]
+Tie-breaker:
+  bandwidth_bonus  : +0.05  — link bw lớn → còn nhiều capacity
+  queue_size_bonus : +0.05  — queue lớn → ít bị drop hơn
 
-Shaping reward (intermediate hop) — cùng thứ tự ưu tiên, hệ số nhỏ hơn:
-  delay          : 0.08
-  avg_queue_util : 0.07
-  utilization    : 0.05
-  hops penalty   : 0.025 (cố định)
-  bandwidth bonus: +0.02
-  queue_size bonus: +0.02
+Tổng hệ số phạt:
+  0.30 + 0.22 + 0.13 + 0.12 + 0.08 = 0.85
+Tổng bonus tối đa:
+  0.05 + 0.05 = 0.10
+→ reward ∈ [-2.0, +1.10]  thực tế ≈ [-2.0, +1.0]
+
+Điều kiện kết thúc episode:
+  - terminated: current_node == dst (đến đích)
+  - truncated : hops >= max_hops - 1 (hết bước)
+  Không còn truncated vì drop — drop được phạt qua reward thay thế.
+
+Shaping reward (intermediate hop) — cùng thứ tự, hệ số nhỏ hơn.
 """
 
-BANDWIDTH_MAX  = 200.0   # Mbps  — dùng để normalize tie-breaker
-QUEUE_SIZE_MAX = 100.0   # packets
+BANDWIDTH_MAX      = 200.0   # Mbps
+QUEUE_SIZE_MAX     = 100.0   # packets
+DROP_PENALTY_SCALE = 50.0    # packets — 50 packets drop → phạt tối đa
 
 
 def compute_final_reward(
-    path_found:     bool,
-    total_delay:    float,
-    dropped:        bool,
-    hops:           int,
-    utilization:    float,          # avg utilization băng thông trên path [0,1]
-    avg_queue_util: float = 0.0,   # avg queue_util trên path [0,1]
-    avg_bandwidth:  float = 0.0,   # avg bandwidth trên path (Mbps)
-    avg_queue_size: float = 0.0,   # avg queue_size_cur trên path (packets)
+    path_found:        bool,
+    total_delay:       float,
+    hops:              int,
+    utilization:       float,
+    avg_queue_util:    float = 0.0,
+    avg_bandwidth:     float = 0.0,
+    avg_queue_size:    float = 0.0,
+    total_dropped_data:float = 0.0,   # tổng data bị drop trên toàn path
 ) -> float:
     """
     Reward cuối episode (terminated hoặc truncated).
 
     Trả về float ∈ [-2.0, +1.0].
+    Không nhận tham số 'dropped' bool nữa — drop được phạt qua
+    total_dropped_data.
     """
     if not path_found:
         return -2.0
 
     reward = 1.0
 
-    # ── Phạt delay (ưu tiên CAO NHẤT) ───────────────────────────────
-    reward -= min(1.0, total_delay / 50.0)  * 0.35
+    # ── Phạt avg_queue_util và utilization (congestion) ─────────────
+    reward -= avg_queue_util * 0.13
+    reward -= utilization    * 0.12
 
-    # ── Phạt congestion (queue > util) ───────────────────────────────
-    reward -= avg_queue_util * 0.25
-    reward -= utilization    * 0.20
+    # ── Phạt hops và delay ───────────────────────────────────────────
+    reward -= min(1.0, hops / 7.0)          * 0.08
+    reward -= min(1.0, total_delay / 50.0)  * 0.22
 
-    # ── Phạt hops (thứ yếu) ──────────────────────────────────────────
-    reward -= min(1.0, hops / 7.0)          * 0.10
+    # ── Phạt dropped_data — ưu tiên cao nhất ─────────────────────────
+    # Phạt liên tục theo lượng data bị drop, không cắt episode đột ngột.
+    # DROP_PENALTY_SCALE: 50 packets drop → phạt tối đa 0.30 điểm.
+    reward -= min(1.0, total_dropped_data / DROP_PENALTY_SCALE) * 0.30
 
     # ── Tie-breaker: thưởng capacity lớn ─────────────────────────────
-    # Khi util/queue_util bằng nhau → ưu tiên link bw cao, queue lớn.
-    # Bonus nhỏ (+0.05) không làm đảo lộn thứ tự ưu tiên trên.
     if avg_bandwidth > 0:
         reward += min(1.0, avg_bandwidth  / BANDWIDTH_MAX)  * 0.05
     if avg_queue_size > 0:
         reward += min(1.0, avg_queue_size / QUEUE_SIZE_MAX) * 0.05
-
-    # ── Phòng thủ drop ────────────────────────────────────────────────
-    if dropped:
-        reward -= 0.2
 
     return float(reward)
 
@@ -83,13 +89,12 @@ def compute_shaping_reward(
     current_link_queue_util:  float,
     current_link_bandwidth:   float = 0.0,
     current_link_queue_size:  float = 0.0,
+    current_link_dropped:     float = 0.0,   # dropped_data của link vừa đi qua
 ) -> float:
     """
     Reward shaping cho bước trung gian (intermediate hop).
 
-    Cùng thứ tự ưu tiên với final reward nhưng hệ số nhỏ hơn,
-    tránh lấn át tín hiệu học dài hạn.
-
+    Cùng thứ tự ưu tiên với final reward nhưng hệ số nhỏ hơn.
     Trả về float ∈ [-0.5, 0.0).
     """
     shaping = 0.0
@@ -97,14 +102,17 @@ def compute_shaping_reward(
     # Phạt cố định mỗi hop — khuyến khích path ngắn
     shaping -= 0.025
 
-    # Phạt delay link hiện tại (ưu tiên cao nhất)
-    shaping -= min(1.0, current_link_delay / 10.0) * 0.08
-
     # Phạt congestion (queue > util)
-    shaping -= current_link_queue_util  * 0.07
-    shaping -= current_link_utilization * 0.05
+    shaping -= current_link_queue_util  * 0.04
+    shaping -= current_link_utilization * 0.03
 
-    # Tie-breaker: thưởng nhỏ cho link capacity cao
+    # Phạt delay link
+    shaping -= min(1.0, current_link_delay / 10.0) * 0.07
+
+    # Phạt dropped_data của link này
+    shaping -= min(1.0, current_link_dropped / 10.0) * 0.10
+
+    # Tie-breaker: thưởng capacity cao
     if current_link_bandwidth > 0:
         shaping += min(1.0, current_link_bandwidth  / BANDWIDTH_MAX)  * 0.02
     if current_link_queue_size > 0:

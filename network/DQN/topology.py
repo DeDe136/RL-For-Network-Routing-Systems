@@ -3,11 +3,12 @@ network/DQN/topology.py
 
 Topology mạng 8 node với MDP traffic model theo spec.
 
-Mỗi link có 6 thông số (LinkAttr):
-  delay, bandwidth, queue_size_cur, queue_used_cur, queue_used, load
+Mỗi link có 7 thông số (LinkAttr):
+  delay, bandwidth, queue_size_cur,
+  queue_used_cur, queue_used, load, dropped_data
 
-link_state_vector() trả về (num_edges, 5):
-  [delay_norm, bw_norm, queue_size_cur_norm, utilization, queue_util]
+link_state_vector() trả về (num_edges, 6):
+  [delay_norm, bw_norm, queue_size_cur_norm, utilization, queue_util, drop_norm]
 
 ═══════════════════════════════════════════════════════════════════
   send_traffic(path, volume) — MDP traffic model
@@ -18,16 +19,18 @@ CHỈ cho đoạn link hiện tại [prev_node → cur_node].
 
 Logic send_traffic cho 1 link (u→v) với volume_mbps:
 
-  1. Tìm queue_used của link trước (prev→u) trong path.
-     Nếu không có link trước → queue_used_prev = 0.
+  1. Lấy queue_used từ link trước (prev→u). Reset về 0.
 
   2. Cộng dồn vào queue_used_cur của link (u→v):
        queue_used_cur += queue_used_prev + volume  (chỉ bước đầu)
        queue_used_cur += queue_used_prev           (các bước sau — volume đã đi vào bước trước)
      Sau đó gán queue_used của link trước về 0.
 
-  3. Drop check:
-       if queue_used_cur > queue_size_cur → dropped = True
+  3. Drop & clamp:
+       if queue_used_cur > queue_size_cur:
+           dropped_data += (queue_used_cur - queue_size_cur)
+           queue_used_cur = queue_size_cur   ← giới hạn, KHÔNG dừng
+       (không còn early-return hay truncated vì drop)
 
   4. Cập nhật load và queue_used:
        remain_bw = bandwidth - load
@@ -49,28 +52,23 @@ Logic send_traffic cho 1 link (u→v) với volume_mbps:
   reduce_load(path) — leaky bucket trên path
 ═══════════════════════════════════════════════════════════════════
 
-Sau mỗi step, reduce_load xử lý tuần tự từng link trong path (trái→phải):
+Xử lý tuần tự từng link trong path (trái→phải):
 
-  Với mỗi link (u→v) trong path:
-  A) Nếu load(u→v) != 0 và tồn tại link tiếp theo (v→w):
-       queue_used_cur(v→w) += load(u→v)
-       load(u→v) = 0
-     Nếu không có link tiếp theo:
-       load(u→v) = 0
+  Phần A — chuyển load sang link kế tiếp:
+    if load(u→v) != 0:
+      if has_next: queue_used_cur(v→w) += load(u→v)
+        → nếu overflow: dropped_data(v→w) += overflow
+                         queue_used_cur(v→w) = queue_size_cur(v→w)
+      load(u→v) = 0
 
-  B) Nếu queue_used_cur(u→v) == 0:
-       load(u→v) = 0
-     Nếu queue_used_cur(u→v) != 0:
-       load(u→v) = 0
-       remain_bw = bandwidth(u→v) - load(u→v)  (= bandwidth vì load=0)
-       if remain_bw <= queue_used_cur(u→v):
-           load += remain_bw
-           queue_used_cur -= remain_bw
-       else:
-           load += queue_used_cur
-           queue_used_cur = 0
+  Phần B — xử lý queue_used_cur còn lại:
+    if queue_used_cur == 0: load = 0
+    else:
+      remain_bw = bandwidth (vì load=0)
+      if remain_bw <= queue_used_cur: load += remain_bw; queue_used_cur -= remain_bw
+      else:                           load += queue_used_cur; queue_used_cur = 0
 
-  Các link ngoài path: decay load theo cấp số nhân (leaky bucket).
+  Link ngoài path: decay load theo cấp số nhân.
 """
 
 import networkx as nx
@@ -106,6 +104,7 @@ class NetworkTopology:
     DELAY_NORM_MAX          = 10.0
     BANDWIDTH_NORM_MAX      = 200.0
     QUEUE_SIZE_CUR_NORM_MAX = 100.0
+    DROP_NORM_MAX = 10.0
 
     def __init__(self, seed: int = None,
                  rng: Optional[np.random.Generator] = None):
@@ -138,9 +137,7 @@ class NetworkTopology:
             qsize  = int(self._rng.integers(*self.QUEUE_SIZE_CUR_RANGE))
             for a, b in [(u, v), (v, u)]:
                 self._link_attrs[(a, b)] = LinkAttr(
-                    delay=delay,
-                    bandwidth=bw,
-                    queue_size_cur=qsize,
+                    delay=delay, bandwidth=bw, queue_size_cur=qsize,
                 )
 
     # ------------------------------------------------------------------ #
@@ -165,11 +162,13 @@ class NetworkTopology:
 
     def link_state_vector(self) -> np.ndarray:
         """
-        Shape (num_edges, 5):
-          [delay_norm, bw_norm, queue_size_cur_norm, utilization, queue_util]
+        Shape (num_edges, 6):
+          [delay_norm, bw_norm, queue_size_cur_norm,
+           utilization, queue_util, drop_norm]
 
         Cột 0-2: tham số vật lý (thay đổi mỗi episode).
-        Cột 3-4: trạng thái lưu lượng (thay đổi mỗi step).
+        Cột 3-5: trạng thái lưu lượng (thay đổi mỗi step).
+          drop_norm = dropped_data / DROP_NORM_MAX (tích lũy trong episode).
         """
         rows = []
         for (u, v), attr in sorted(self._link_attrs.items()):
@@ -179,6 +178,7 @@ class NetworkTopology:
                 attr.queue_size_cur / self.QUEUE_SIZE_CUR_NORM_MAX,
                 attr.utilization,
                 attr.queue_util,
+                min(1.0, attr.dropped_data / self.DROP_NORM_MAX),
             ])
         return np.array(rows, dtype=np.float32)
 
@@ -188,12 +188,12 @@ class NetworkTopology:
 
     def send_traffic(
         self,
-        path:        List[int],
-        volume_mbps: float,
+        path:         List[int],
+        volume_mbps:  float,
         is_first_hop: bool,
     ) -> Dict:
         """
-        Xử lý traffic cho đoạn link CUỐI CÙNG trong path.
+        Xử lý traffic cho link CUỐI CÙNG trong path (path[-2] → path[-1]).
         Gọi mỗi step khi agent di chuyển từ path[-2] → path[-1].
 
         Args:
@@ -203,26 +203,31 @@ class NetworkTopology:
                           queue_used_cur), False nếu không (chỉ cộng
                           queue_used từ link trước).
 
+        Khi queue_used_cur > queue_size_cur:
+          - dropped_data tích lũy phần overflow.
+          - queue_used_cur bị clamp về queue_size_cur.
+          - Tiếp tục xử lý bình thường (không dừng episode).
+
         Returns:
-            dict: total_delay (ms), dropped (bool), hops (int).
+            total_delay (ms), dropped_data (float — lượng data bị drop
+            tại hop này), hops (int).
         """
         if len(path) < 2:
-            return {"total_delay": 0.0, "dropped": False, "hops": 0}
+            return {"total_delay": 0.0, "dropped_data": 0.0, "hops": 0}
 
-        u = path[-2]   # node trước
-        v = path[-1]   # node hiện tại (vừa di chuyển đến)
+        u    = path[-2]
+        v    = path[-1]
         attr = self._link_attrs[(u, v)]
 
-        # ── Bước 1: lấy queue_used từ link trước ─────────────────────
+        # Bước 1: lấy queue_used từ link trước
         if len(path) >= 3:
-            prev = path[-3]
-            prev_attr      = self._link_attrs[(prev, u)]
+            prev_attr       = self._link_attrs[(path[-3], u)]
             queue_used_prev = prev_attr.queue_used
-            prev_attr.queue_used = 0.0          # reset sau khi lấy
+            prev_attr.queue_used = 0.0
         else:
             queue_used_prev = 0.0
 
-        # ── Bước 2: cộng vào queue_used_cur ──────────────────────────
+        # Bước 2: cộng vào queue_used_cur
         if is_first_hop:
             # Hop đầu: cộng cả volume lẫn queue_used từ link trước
             attr.queue_used_cur += queue_used_prev + volume_mbps
@@ -231,11 +236,16 @@ class NetworkTopology:
             # chỉ cộng queue_used được chuyển từ link trước
             attr.queue_used_cur += queue_used_prev
 
-        # ── Bước 3: drop check ───────────────────────────────────────
-        dropped = attr.queue_used_cur > attr.queue_size_cur
+        # Bước 3: drop & clamp — KHÔNG dừng episode
+        hop_dropped = 0.0
+        if attr.queue_used_cur > attr.queue_size_cur:
+            overflow          = attr.queue_used_cur - attr.queue_size_cur
+            attr.dropped_data += overflow
+            hop_dropped        = overflow
+            attr.queue_used_cur = float(attr.queue_size_cur)   # clamp
 
-        # ── Bước 4: cập nhật load và queue_used ──────────────────────
-        remain_bw = attr.bandwidth - attr.load   # băng thông còn trống
+        # Bước 4: cập nhật load và queue_used
+        remain_bw = attr.bandwidth - attr.load  # băng thông còn trống
         if remain_bw <= attr.queue_used_cur:
             attr.load          += remain_bw
             attr.queue_used     = attr.load
@@ -246,31 +256,39 @@ class NetworkTopology:
             attr.queue_used_cur = 0.0
 
         return {
-            "total_delay": attr.delay,
-            "dropped":     dropped,
-            "hops":        1,
+            "total_delay":  attr.delay,
+            "dropped_data": hop_dropped,
+            "hops":         1,
         }
 
     # ------------------------------------------------------------------ #
     #  reduce_load — leaky bucket trên path                               #
     # ------------------------------------------------------------------ #
 
-    def reduce_load(self, path: List[int], decay: float = 0.85) -> bool:
+    def reduce_load(self, path: List[int], decay: float = 0.85) -> float:
         """
-        Sau mỗi step, xử lý tuần tự từng link trong path (trái→phải),
-        sau đó decay load các link ngoài path.
+        Xử lý tuần tự từng link trong path (trái→phải),
+        sau đó decay link ngoài path.
 
         Args:
             path : path đầy đủ tính đến step này.
             decay: hệ số giảm load cho link ngoài path [0,1].
+
+        Khi chuyển load sang link kế tiếp gây overflow:
+          - dropped_data của link kế tiếp tích lũy phần overflow.
+          - queue_used_cur bị clamp.
+
+        Returns:
+            total_dropped (float): tổng lượng data bị drop trong bước này
+            do reduce_load gây ra (dùng để tích lũy vào episode total).
         """
-        path_links = set()
-        dropped = False
+        path_links    = set()
+        total_dropped = 0.0
 
         if len(path) >= 2:
             for idx in range(len(path) - 1):
-                u = path[idx]
-                v = path[idx + 1]
+                u    = path[idx]
+                v    = path[idx + 1]
                 attr = self._link_attrs[(u, v)]
                 path_links.add((u, v))
 
@@ -283,19 +301,24 @@ class NetworkTopology:
                     next_attr = None
                     has_next  = False
 
-                # ── Phần A: chuyển load sang link kế tiếp ─────────────
+                # Phần A: chuyển load sang link kế tiếp
                 if attr.load != 0:
                     if has_next:
                         next_attr.queue_used_cur += attr.load
-                        dropped = next_attr.queue_used_cur > next_attr.queue_size_cur
+                        # Drop & clamp tại link kế tiếp
+                        if next_attr.queue_used_cur > next_attr.queue_size_cur:
+                            overflow = next_attr.queue_used_cur - next_attr.queue_size_cur
+                            next_attr.dropped_data  += overflow
+                            total_dropped           += overflow
+                            next_attr.queue_used_cur = float(next_attr.queue_size_cur)
                     attr.load = 0.0
 
-                # ── Phần B: xử lý queue_used_cur còn lại ──────────────
+                # Phần B: xử lý queue_used_cur còn lại
                 if attr.queue_used_cur == 0.0:
                     attr.load = 0.0
                 else:
-                    attr.load  = 0.0
-                    remain_bw  = attr.bandwidth   # load=0 nên remain=bw
+                    attr.load = 0.0
+                    remain_bw = attr.bandwidth   # load=0 nên remain=bandwidth
                     if remain_bw <= attr.queue_used_cur:
                         attr.load           += remain_bw
                         attr.queue_used_cur -= remain_bw
@@ -303,14 +326,14 @@ class NetworkTopology:
                         attr.load           += attr.queue_used_cur
                         attr.queue_used_cur  = 0.0
 
-        # Decay link ngoài path (background leaky bucket)
+        # Decay link ngoài path
         for (u, v), attr in self._link_attrs.items():
             if (u, v) not in path_links:
-                attr.load           = attr.load           * decay
-                attr.queue_used_cur = attr.queue_used_cur * decay
-                attr.queue_used     = attr.queue_used     * decay
-        
-        return dropped
+                attr.load           *= decay
+                attr.queue_used_cur *= decay
+                attr.queue_used     *= decay
+
+        return total_dropped
 
     # ------------------------------------------------------------------ #
     #  Background traffic                                                  #
@@ -327,7 +350,7 @@ class NetworkTopology:
             max(len(all_links) // 3 + 1, len(all_links) * 2 // 3)
         ))
         for idx in self._rng.choice(len(all_links), size=n, replace=False):
-            u, v = all_links[idx]
+            u, v  = all_links[idx]
             attr  = self._link_attrs[(u, v)]
             extra = float(self._rng.uniform(0, intensity * attr.bandwidth))
             attr.load           = min(attr.bandwidth,      attr.load + extra)
@@ -338,7 +361,7 @@ class NetworkTopology:
     # ------------------------------------------------------------------ #
 
     def reset(self, rng: Optional[np.random.Generator] = None):
-        """Sinh lại tham số link ngẫu nhiên và xóa trạng thái traffic."""
+        """Sinh lại tham số link và xóa trạng thái traffic (kể cả dropped_data)."""
         if rng is not None:
             self._rng = rng
         self.randomize_links()
@@ -347,7 +370,7 @@ class NetworkTopology:
     #  Helpers                                                             #
     # ------------------------------------------------------------------ #
 
-    # Lấy trọng số delay trên từng link để tính đường đi ngắn nhất dựa trên OSPF
+     # Lấy trọng số delay trên từng link để tính đường đi ngắn nhất dựa trên OSPF
     def weight(self, u, v, d):
         return self._link_attrs[(u, v)].delay
 
@@ -358,12 +381,14 @@ class NetworkTopology:
             return []
 
     def summary(self) -> Dict:
-        utils  = [a.utilization for a in self._link_attrs.values()]
-        queues = [a.queue_util  for a in self._link_attrs.values()]
+        utils  = [a.utilization  for a in self._link_attrs.values()]
+        queues = [a.queue_util   for a in self._link_attrs.values()]
+        drops  = [a.dropped_data for a in self._link_attrs.values()]
         return {
-            "avg_utilization": float(np.mean(utils))  if utils else 0.0,
-            "max_utilization": float(np.max(utils))   if utils else 0.0,
-            "avg_queue_util":  float(np.mean(queues)) if queues else 0.0,
-            "congested_links": sum(1 for a in self._link_attrs.values()
-                                   if a.is_congested),
+            "avg_utilization":  float(np.mean(utils))  if utils else 0.0,
+            "max_utilization":  float(np.max(utils))   if utils else 0.0,
+            "avg_queue_util":   float(np.mean(queues)) if queues else 0.0,
+            "total_dropped":    float(np.sum(drops))   if drops  else 0.0,
+            "congested_links":  sum(1 for a in self._link_attrs.values()
+                                    if a.is_congested),
         }
