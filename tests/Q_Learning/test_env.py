@@ -25,7 +25,7 @@ def make_env():
 
 @pytest.fixture
 def gym_env():
-    e = gym.make("NetworkRouting-v0", max_hops=8, seed=0)
+    e = gym.make("NetworkRouting-QL-v0", max_hops=8, seed=0)
     yield e
     e.close()
 

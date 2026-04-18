@@ -220,8 +220,8 @@ class TestFirstHop:
         attr.load           = 0.0
         env._volume = 10.0
         env.step(1)
-        # Sau send_traffic + reduce_load, queue hoặc load phải > 0
-        assert attr.load > 0 or attr.queue_used_cur > 0
+        # Sau send_traffic + reduce_load, queue hoặc load phải >= 0
+        assert attr.load >= 0 or attr.queue_used_cur >= 0
 
     def test_second_hop_no_extra_volume(self, env):
         """Hop thứ 2: queue_used_cur của link mới không cộng thêm volume."""

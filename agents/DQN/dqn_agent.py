@@ -69,9 +69,15 @@ class DQNAgent(BaseAgent):
         self.learn_start        = config.get("learn_start",        self.batch_size)
 
         # Thiết bị tính toán (CPU/GPU)
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        if hasattr(torch, 'xpu') and torch.xpu.is_available():
+            self.device = torch.device("xpu")
+            print("🚀 Đang dùng Intel XPU (GPU Intel)")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+            print("🚀 Đang dùng NVIDIA CUDA")
+        else:
+            self.device = torch.device("cpu")
+            print("📟 Đang dùng CPU")
 
         # Mạng Q chính và mạng mục tiêu
         self.q_net      = QNetwork(self.input_dim, n_actions,

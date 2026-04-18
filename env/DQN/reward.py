@@ -1,52 +1,76 @@
 """
-env/DQN/reward.py
+env/reward.py
 
-Hàm reward cho bài toán định tuyến.
-Mục tiêu: tối thiểu delay + drop, tối đa throughput.
+Hàm reward cho bài toán định tuyến mạng.
+
+Thứ tự ưu tiên (trọng số giảm dần):
+  delay           > avg_queue_util  > utilization  > hops
+
+  delay          : 0.35  — ưu tiên cao nhất (QoS quan trọng nhất)
+  avg_queue_util : 0.25  — tránh đầy hàng đợi → drop
+  utilization    : 0.20  — tránh nghẽn băng thông
+  hops           : 0.10  — ít hop hơn tốt hơn
+
+Tie-breaker (khi util/queue_util bằng nhau):
+  bandwidth_bonus   : +0.05  — link bw lớn → còn nhiều capacity
+  queue_size_bonus  : +0.05  — queue lớn → ít bị drop hơn
+
+Tổng hệ số phạt : 0.35 + 0.25 + 0.20 + 0.10 = 0.90
+Tổng bonus tối đa: 0.05 + 0.05 = 0.10
+→ reward ∈ [-2.0, +1.10] thực tế ≈ [-2.0, +1.0]
+
+Shaping reward (intermediate hop) — cùng thứ tự ưu tiên, hệ số nhỏ hơn:
+  delay          : 0.08
+  avg_queue_util : 0.07
+  utilization    : 0.05
+  hops penalty   : 0.025 (cố định)
+  bandwidth bonus: +0.02
+  queue_size bonus: +0.02
 """
+
+BANDWIDTH_MAX  = 200.0   # Mbps  — dùng để normalize tie-breaker
+QUEUE_SIZE_MAX = 100.0   # packets
 
 
 def compute_final_reward(
-    path_found: bool,
-    total_delay: float,
-    dropped: bool,
-    hops: int,
-    utilization: float,
-    avg_queue_util: float = 0.0,
+    path_found:     bool,
+    total_delay:    float,
+    dropped:        bool,
+    hops:           int,
+    utilization:    float,          # avg utilization băng thông trên path [0,1]
+    avg_queue_util: float = 0.0,   # avg queue_util trên path [0,1]
+    avg_bandwidth:  float = 0.0,   # avg bandwidth trên path (Mbps)
+    avg_queue_size: float = 0.0,   # avg queue_size_cur trên path (packets)
 ) -> float:
     """
-    Reward cuối episode (khi terminated hoặc truncated).
+    Reward cuối episode (terminated hoặc truncated).
 
-    Args:
-        path_found     : agent đến đích thành công (không bị drop)
-        total_delay    : tổng delay trên toàn path (ms)
-        dropped        : có gói bị drop không
-        hops           : số hop đã đi
-        utilization    : utilization băng thông trung bình trên path [0,1]
-        avg_queue_util : tỉ lệ đầy hàng đợi trung bình trên path [0,1]
-
-    Returns:
-        reward float trong [-2, +1]
+    Trả về float ∈ [-2.0, +1.0].
     """
     if not path_found:
-        return -2.0             # không đến được đích — phạt nặng
+        return -2.0
 
     reward = 1.0
 
-    # Phạt delay (50ms coi là xấu)
-    reward -= min(1.0, total_delay / 50.0) * 0.4
+    # ── Phạt delay (ưu tiên CAO NHẤT) ───────────────────────────────
+    reward -= min(1.0, total_delay / 50.0)  * 0.35
 
-    # Phạt hop count (tối đa 7 hops)
-    reward -= min(1.0, hops / 7.0) * 0.2
+    # ── Phạt congestion (queue > util) ───────────────────────────────
+    reward -= avg_queue_util * 0.25
+    reward -= utilization    * 0.20
 
-    # Phạt utilization băng thông trung bình
-    reward -= utilization * 0.1
+    # ── Phạt hops (thứ yếu) ──────────────────────────────────────────
+    reward -= min(1.0, hops / 7.0)          * 0.10
 
-    # Phạt queue_util trung bình — báo hiệu mức độ gần tắc nghẽn
-    reward -= avg_queue_util * 0.1
+    # ── Tie-breaker: thưởng capacity lớn ─────────────────────────────
+    # Khi util/queue_util bằng nhau → ưu tiên link bw cao, queue lớn.
+    # Bonus nhỏ (+0.05) không làm đảo lộn thứ tự ưu tiên trên.
+    if avg_bandwidth > 0:
+        reward += min(1.0, avg_bandwidth  / BANDWIDTH_MAX)  * 0.05
+    if avg_queue_size > 0:
+        reward += min(1.0, avg_queue_size / QUEUE_SIZE_MAX) * 0.05
 
-    # dropped không thể xảy ra khi path_found=True (routing_env đảm bảo),
-    # giữ lại để phòng thủ nếu logic env thay đổi
+    # ── Phòng thủ drop ────────────────────────────────────────────────
     if dropped:
         reward -= 0.2
 
@@ -54,34 +78,36 @@ def compute_final_reward(
 
 
 def compute_shaping_reward(
-    current_link_delay: float,
+    current_link_delay:       float,
     current_link_utilization: float,
-    current_link_queue_util: float,
+    current_link_queue_util:  float,
+    current_link_bandwidth:   float = 0.0,
+    current_link_queue_size:  float = 0.0,
 ) -> float:
     """
-    Reward shaping cho các bước trung gian (intermediate hops).
-    Chỉ phạt dựa trên link vừa đi qua — không dùng tổng tích lũy.
+    Reward shaping cho bước trung gian (intermediate hop).
 
-    Args:
-        current_link_delay       : delay của link vừa chọn (ms)
-        current_link_utilization : utilization băng thông của link đó [0,1]
-        current_link_queue_util  : tỉ lệ đầy queue của link đó [0,1]
+    Cùng thứ tự ưu tiên với final reward nhưng hệ số nhỏ hơn,
+    tránh lấn át tín hiệu học dài hạn.
 
-    Returns:
-        shaping reward trong [-0.5, 0)
+    Trả về float ∈ [-0.5, 0.0).
     """
     shaping = 0.0
 
     # Phạt cố định mỗi hop — khuyến khích path ngắn
     shaping -= 0.025
 
-    # Phạt delay của riêng link này (không tích lũy)
-    shaping -= min(1.0, current_link_delay / 10.0) * 0.05
+    # Phạt delay link hiện tại (ưu tiên cao nhất)
+    shaping -= min(1.0, current_link_delay / 10.0) * 0.08
 
-    # Phạt utilization băng thông link hiện tại
+    # Phạt congestion (queue > util)
+    shaping -= current_link_queue_util  * 0.07
     shaping -= current_link_utilization * 0.05
 
-    # Phạt queue_util link hiện tại — cảnh báo sắp drop
-    shaping -= current_link_queue_util * 0.05
+    # Tie-breaker: thưởng nhỏ cho link capacity cao
+    if current_link_bandwidth > 0:
+        shaping += min(1.0, current_link_bandwidth  / BANDWIDTH_MAX)  * 0.02
+    if current_link_queue_size > 0:
+        shaping += min(1.0, current_link_queue_size / QUEUE_SIZE_MAX) * 0.02
 
     return max(-0.5, float(shaping))

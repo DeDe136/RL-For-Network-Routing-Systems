@@ -513,10 +513,10 @@ class TestNetworkTopology:
 
     def test_decay_outside_path(self):
         """Link ngoài path bị decay."""
-        attr = self.topo.link(2, 3)
+        attr = self.topo.link(1, 2)
         attr.load = 50.0
         self.topo.reduce_load([0, 1], decay=0.5)
-        assert self.topo.link(2,3).load == pytest.approx(25.0)
+        assert self.topo.link(1,2).load == pytest.approx(25.0)
 
     def test_step_background_changes_utilization(self):
         utils_before = [a.utilization for a in self.topo._link_attrs.values()]

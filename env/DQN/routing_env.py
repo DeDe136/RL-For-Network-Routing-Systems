@@ -1,21 +1,24 @@
 """
-env/DQN/routing_env.py
+env/routing_env.py
 
 NetworkRoutingEnv — môi trường Gymnasium định tuyến mạng 8 node.
 
 Vòng lặp một episode:
   reset() → randomize_links + step_background → sinh demand (src,dst,vol)
   step(action) lặp lại:
-    1. Di chuyển cur → action.
-    2. send_traffic([...path...], volume, is_first_hop) — MDP model.
-    3. reduce_load(path) — leaky bucket trên path + decay ngoài path.
-    4. Tính reward từ trạng thái link vừa đi qua.
-    5. Kiểm tra terminated / truncated.
+    1. Kiểm tra link hợp lệ (has_link). Nếu không → phạt -0.5, giữ vị trí.
+    2. Lưu link vừa chọn (cho shaping reward).
+    3. Di chuyển cur → action, tăng hops.
+    4. send_traffic(path, volume, is_first_hop) — MDP model.
+    5. reduce_load(path) — leaky bucket + decay ngoài path.
+       Nếu reduce_load trả về is_drop=True → _dropped = True.
+    6. Tính reward từ trạng thái link.
+    7. Kiểm tra điều kiện kết thúc.
 
 Điều kiện kết thúc (if/elif — chỉ một True mỗi bước):
   dropped             → truncated, phạt nặng
   current_node == dst → terminated, thưởng
-  hops >= max_hops    → truncated, phạt
+  hops >= max_hops-1  → truncated, phạt (cho agent 1 hop cuối rồi kết thúc)
 
 Observation (dict):
   current_node : int
@@ -105,19 +108,20 @@ class NetworkRoutingEnv(gym.Env):
         terminated = False
         truncated  = False
 
-        # Kiểm tra link hợp lệ
+        # ── Kiểm tra link hợp lệ ─────────────────────────────────────
+        # Agent được training chỉ chọn valid neighbors (action masking),
+        # nhưng giữ guard này để routing_env không crash nếu action sai.
         if not self.topo.has_link(self._current_node, action):
-            # Chọn node không có link → phạt nhẹ, giữ nguyên vị trí
             reward = -0.5
-            info = self._info()
+            info   = self._info()
             if self.render_mode == "human":
                 self._render_step(action, reward, "invalid link")
             return self._obs(), reward, terminated, truncated, info
 
-        # Lưu link vừa đi qua (để dùng cho shaping reward)
+        # Lưu link trước khi di chuyển (dùng cho shaping reward sau)
         link = self.topo.link(self._current_node, action)
 
-        # Di chuyển đến next_hop
+        # ── Di chuyển đến next_hop ────────────────────────────────────
         self._hops         += 1
         self._current_node  = action
         self._path.append(action)
@@ -134,15 +138,16 @@ class NetworkRoutingEnv(gym.Env):
             self._dropped = True
 
         # ── reduce_load (leaky bucket) ────────────────────────────────
+        # reduce_load trả về is_drop=True nếu phát hiện drop trong quá
+        # trình xử lý queue (queue_used_cur vượt queue_size_cur).
         is_drop = self.topo.reduce_load(self._path)
         if is_drop:
             self._dropped = True
 
-        # ── Tính reward ───────────────────────────────────────────────
-        # Đọc sau reduce_load để reward phản ánh trạng thái sau cập nhật
-        avg_util, avg_queue = self._path_avg_metrics()
+        # ── Tính metrics sau cập nhật ─────────────────────────────────
+        avg_util, avg_queue, avg_bw, avg_qsize = self._path_avg_metrics()
 
-        # Điều kiện kết thúc — if/elif đảm bảo chỉ 1 True mỗi bước
+        # ── Điều kiện kết thúc (if/elif: chỉ 1 True mỗi bước) ────────
         if self._dropped:
             truncated = True
             reward = compute_final_reward(
@@ -152,6 +157,8 @@ class NetworkRoutingEnv(gym.Env):
                 hops           = self._hops,
                 utilization    = avg_util,
                 avg_queue_util = avg_queue,
+                avg_bandwidth  = avg_bw,
+                avg_queue_size = avg_qsize,
             )
 
         elif self._current_node == self._dst:
@@ -163,9 +170,12 @@ class NetworkRoutingEnv(gym.Env):
                 hops           = self._hops,
                 utilization    = avg_util,
                 avg_queue_util = avg_queue,
+                avg_bandwidth  = avg_bw,
+                avg_queue_size = avg_qsize,
             )
 
-        elif self._hops >= self.max_hops:
+        elif self._hops >= self.max_hops - 1:
+            # Cho agent 1 hop nữa rồi kết thúc, tránh bị cắt quá sớm
             truncated = True
             reward = compute_final_reward(
                 path_found     = False,
@@ -174,14 +184,18 @@ class NetworkRoutingEnv(gym.Env):
                 hops           = self._hops,
                 utilization    = avg_util,
                 avg_queue_util = avg_queue,
+                avg_bandwidth  = avg_bw,
+                avg_queue_size = avg_qsize,
             )
 
         else:
-            # Shaping reward: dùng trạng thái link vừa đi qua
+            # Shaping reward: dựa trên link vừa đi qua (đọc sau reduce_load)
             reward = compute_shaping_reward(
                 current_link_delay       = link.delay,
                 current_link_utilization = link.utilization,
                 current_link_queue_util  = link.queue_util,
+                current_link_bandwidth   = link.bandwidth,
+                current_link_queue_size  = link.queue_size_cur,
             )
 
         info = self._info()
@@ -216,17 +230,22 @@ class NetworkRoutingEnv(gym.Env):
         """Flat vector (132,) — input cho DQN network."""
         return obs_to_flat(self._obs())
 
-    def _path_avg_metrics(self) -> Tuple[float, float]:
-        """(avg_utilization, avg_queue_util) trên path hiện tại."""
+    def _path_avg_metrics(self) -> Tuple[float, float, float, float]:
+        """
+        (avg_utilization, avg_queue_util, avg_bandwidth, avg_queue_size_cur)
+        trên path hiện tại.
+        """
         if len(self._path) < 2:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0
         links = [
             self.topo.link(self._path[i], self._path[i + 1])
             for i in range(len(self._path) - 1)
         ]
         return (
-            float(np.mean([lk.utilization for lk in links])),
-            float(np.mean([lk.queue_util  for lk in links])),
+            float(np.mean([lk.utilization     for lk in links])),
+            float(np.mean([lk.queue_util      for lk in links])),
+            float(np.mean([lk.bandwidth       for lk in links])),
+            float(np.mean([lk.queue_size_cur  for lk in links])),
         )
 
     def _obs(self) -> Dict:
@@ -237,7 +256,11 @@ class NetworkRoutingEnv(gym.Env):
         }
 
     def _info(self) -> Dict:
-        return {
+        """
+        Info đầy đủ bao gồm chi tiết từng link trên path đã đi.
+        Dùng bởi EpisodeLogger để ghi CSV.
+        """
+        info = {
             "src":          self._src,
             "dst":          self._dst,
             "current_node": self._current_node,
@@ -247,6 +270,27 @@ class NetworkRoutingEnv(gym.Env):
             "dropped":      self._dropped,
             **self.topo.summary(),
         }
+        # Per-link details
+        if len(self._path) >= 2:
+            link_details = []
+            for i in range(len(self._path) - 1):
+                u, v = self._path[i], self._path[i + 1]
+                lk = self.topo.link(u, v)
+                link_details.append({
+                    "src_node":       u,
+                    "dst_node":       v,
+                    "delay":          lk.delay,
+                    "bandwidth":      lk.bandwidth,
+                    "load":           lk.load,
+                    "utilization":    lk.utilization,
+                    "queue_size_cur": lk.queue_size_cur,
+                    "queue_used_cur": lk.queue_used_cur,
+                    "queue_util":     lk.queue_util,
+                })
+            info["link_details"] = link_details
+        else:
+            info["link_details"] = []
+        return info
 
     def _render_step(self, action: int, reward: float, status: str):
         print(
