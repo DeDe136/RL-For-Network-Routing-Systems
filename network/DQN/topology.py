@@ -104,7 +104,7 @@ class NetworkTopology:
     DELAY_NORM_MAX          = 10.0
     BANDWIDTH_NORM_MAX      = 200.0
     QUEUE_SIZE_CUR_NORM_MAX = 100.0
-    DROP_NORM_MAX = 10.0
+    DROP_NORM_MAX = 50.0
 
     def __init__(self, seed: int = None,
                  rng: Optional[np.random.Generator] = None):

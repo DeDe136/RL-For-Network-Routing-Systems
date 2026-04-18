@@ -1,5 +1,5 @@
 """
-main.py — Entry point cho DQN routing project.
+main_dqn.py — Entry point cho DQN routing project.
 
 Chạy:
     python main_dqn.py                    # kiểm tra env
@@ -87,20 +87,23 @@ def run_eval(checkpoint: str, render: bool = False):
 #  Demo — DQN vs OSPF, ghi log cả hai vào demo_episodes.csv
 # ─────────────────────────────────────────────────────────────────────
 
-def run_demo(checkpoint: str):
+def run_demo(checkpoint: str, n_pairs: int = 8):
     """
-    So sánh DQN và OSPF (Shortest Path theo delay) trên topology độc lập.
+    So sánh DQN và OSPF trên n_pairs bộ (src, dst, volume) ngẫu nhiên.
 
-    Thiết kế công bằng:
-      - topo_dqn  và topo_ospf dùng CÙNG seed → cùng tham số link vật lý
-        (delay, bandwidth, queue_size_cur) sau randomize_links().
-      - Hai vòng lặp độc lập — DQN xong rồi mới OSPF.
-      - Cả hai đều gọi send_traffic() + reduce_load() từng hop để
-        trạng thái mạng (utilization, queue_util) thay đổi thực tế.
+    Quy trình:
+      1. Sinh n_pairs bộ (src, dst, volume) ngẫu nhiên TRƯỚC.
+      2. Vòng 1 — DQN: topo_dqn reset cùng seed cho mỗi bộ,
+         gọi best_path (có send_traffic + reduce_load từng hop).
+      3. Vòng 2 — OSPF: topo_ospf reset cùng seed (giống DQN) cho mỗi bộ,
+         gọi ospf_path_with_traffic (Dijkstra + send_traffic + reduce_load).
+      4. In 5 biểu đồ so sánh (nếu matplotlib có sẵn).
 
-    Output demo_episodes.csv:
-      - Tất cả episode DQN ghi trước (algo="DQN"), ep_idx = 1..N
-      - Tất cả episode OSPF ghi sau  (algo="OSPF"), ep_idx = N+1..2N
+    Công bằng:
+      - topo_dqn và topo_ospf cùng DEMO_SEED → cùng params vật lý.
+      - Mỗi bộ reset cùng seed con để hai thuật toán bắt đầu từ
+        trạng thái mạng giống hệt nhau.
+      - Cả hai đều mô phỏng traffic thực tế qua từng hop.
     """
     import yaml, numpy as np
     from agents.DQN.dqn_agent import DQNAgent
@@ -117,14 +120,11 @@ def run_demo(checkpoint: str):
     with open("configs/env_config.yaml", encoding="utf-8") as f:
         ecfg = yaml.safe_load(f)
 
-    max_hops = ecfg["env"]["max_hops"]
-    volume   = ecfg["env"].get("mean_traffic_mbps", 10.0)
-    log_dir  = os.path.join(acfg["training"]["log_dir"], "DQN")
+    max_hops  = ecfg["env"]["max_hops"]
+    mean_vol  = ecfg["env"].get("mean_traffic_mbps", 10.0)
+    log_dir   = os.path.join(acfg["training"]["log_dir"], "DQN")
     os.makedirs(log_dir, exist_ok=True)
 
-    # ── Tạo 2 topology độc lập cùng seed ─────────────────────────────
-    # Sau randomize_links() chúng có cùng delay/bandwidth/queue_size,
-    # nhưng trạng thái traffic (load, queue_used_cur) hoàn toàn tách biệt.
     DEMO_SEED = 0
     topo_dqn  = NetworkTopology(seed=DEMO_SEED)
     topo_ospf = NetworkTopology(seed=DEMO_SEED)
@@ -140,18 +140,29 @@ def run_demo(checkpoint: str):
         max_hops = max_hops,
     )
 
-    print("\n" + "=" * 72)
-    print("  DQN vs OSPF Demo  (2 topologies độc lập, cùng seed)")
-    print("=" * 72)
-    print(f"  {agent.network_summary()}")
-    print(f"  volume={volume:.1f} Mbps | seed={DEMO_SEED}\n")
+    # ── Sinh n_pairs bộ (src, dst, volume) ngẫu nhiên ────────────────
+    rng_pairs = np.random.default_rng(DEMO_SEED + 1)
+    pairs = []
+    while len(pairs) < n_pairs:
+        src = int(rng_pairs.integers(0, 8))
+        dst = int(rng_pairs.integers(0, 8))
+        if src != dst and topo_dqn.shortest_path(src, dst):
+            vol = float(max(1.0, rng_pairs.poisson(mean_vol)))
+            pairs.append((src, dst, vol))
 
-    pairs = [(0,7),(1,7),(2,7),(3,7),(0,5),(0,6),(1,4),(2,5)]
+    print("\n" + "=" * 72)
+    print(f"  DQN vs OSPF Demo  ({n_pairs} bộ ngẫu nhiên, seed={DEMO_SEED})")
+    print("=" * 72)
+    print(f"  {agent.network_summary()}\n")
+    print(f"  Các bộ (src, dst, volume):")
+    for i,(s,d,v) in enumerate(pairs):
+        print(f"    [{i+1:2d}] {s}→{d}  vol={v:.1f} Mbps")
+    print()
 
     # ── Helpers ──────────────────────────────────────────────────────
 
     def collect_link_details(path, topo_ref):
-        """Đọc trạng thái link SAU khi send_traffic+reduce_load đã chạy."""
+        """Đọc trạng thái link hiện tại trên path."""
         details = []
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
@@ -166,191 +177,261 @@ def run_demo(checkpoint: str):
                 "queue_size_cur": lk.queue_size_cur,
                 "queue_used_cur": lk.queue_used_cur,
                 "queue_util":     lk.queue_util,
-                "dropped_data": lk.dropped_data,
+                "dropped_data":   lk.dropped_data,
             })
         return details
 
     def avg_metric(details, key):
-        if not details:
-            return 0.0
-        return float(np.mean([d[key] for d in details]))
+        return float(np.mean([d[key] for d in details])) if details else 0.0
 
     def make_info(src_n, dst_n, path, details, topo_ref):
         return {
-            "src":             src_n,
-            "dst":             dst_n,
-            "path":            path,
-            "hops":            len(path) - 1,
-            "total_delay":     sum(d["delay"] for d in details),
-            "dropped":         True if any(d["dropped_data"] > 0 for d in details) else False,
-            "avg_utilization": avg_metric(details, "utilization"),
-            "avg_queue_util":  avg_metric(details, "queue_util"),
-            "total_dropped_data": sum(d["dropped_data"] for d in details),
-            "link_details":    details,
+            "src":               src_n,
+            "dst":               dst_n,
+            "path":              path,
+            "hops":              len(path) - 1,
+            "total_delay":       sum(d["delay"]        for d in details),
+            "dropped":           any(d["dropped_data"] > 0 for d in details),
+            "avg_utilization":   avg_metric(details, "utilization"),
+            "avg_queue_util":    avg_metric(details, "queue_util"),
+            "avg_bandwidth":     avg_metric(details, "bandwidth"),
+            "avg_load":          avg_metric(details, "load"),
+            "total_dropped_data":sum(d["dropped_data"] for d in details),
+            "link_details":      details,
             **topo_ref.summary(),
         }
 
     def ospf_path_with_traffic(src_n, dst_n, topo_ref, vol):
-        """
-        OSPF: tìm shortest path (Dijkstra) rồi mô phỏng traffic
-        từng hop — send_traffic + reduce_load giống best_path DQN.
-
-        Trả về (path, per_hop_details) trong đó per_hop_details là
-        danh sách trạng thái link được đọc SAU send_traffic và
-        reduce_load (giống best_path() của DQN).
-        """
+        """Dijkstra + send_traffic + reduce_load từng hop."""
         full_path = topo_ref.shortest_path(src_n, dst_n)
         if len(full_path) < 2:
-            return full_path, []
-
+            return full_path
         for hop_idx in range(1, len(full_path)):
-            partial      = full_path[: hop_idx + 1]
-            is_first_hop = (hop_idx == 1)
-
-            topo_ref.send_traffic(
-                path         = partial,
-                volume_mbps  = vol,
-                is_first_hop = is_first_hop,
-            )
-
+            partial = full_path[:hop_idx + 1]
+            topo_ref.send_traffic(partial, vol, is_first_hop=(hop_idx == 1))
             topo_ref.reduce_load(partial)
+        return full_path
 
-        # Trạng thái link mỗi hop, đọc sau send_traffic và reduce_load
-        per_hop_details = collect_link_details(full_path, topo_ref)
-
-        return full_path, per_hop_details
+    # ── Seed con cho mỗi bộ (đảm bảo DQN và OSPF bắt đầu giống nhau) ─
+    pair_seeds = [DEMO_SEED + 100 + i for i in range(n_pairs)]
 
     # ═══════════════════════════════════════════════════════════════════
     #  Vòng 1 — DQN
     # ═══════════════════════════════════════════════════════════════════
-    print(f"  {'─'*80}")
-    print(f"  {'Algo':<5} {'Pair':<7} {'Path':<32} {'Delay':>8}  "
-          f"{'AvgUtil':>8}  {'AvgQUtil':>9}")
-    print(f"  {'─'*80}")
+    print(f"  {'─'*72}")
+    print(f"  {'Algo':<5} {'#':<3} {'Pair':<6} {'Vol':>5}  "
+          f"{'Path':<28} {'Delay':>7}  {'AvgUtil':>7}  {'AvgQUtil':>8}")
+    print(f"  {'─'*72}")
     print("  [DQN]")
 
-    dqn_results = []   # lưu để so sánh + biểu đồ
+    dqn_results = []
 
-    for ep_idx, (src_n, dst_n) in enumerate(pairs, start=1):
-        # Reset topology DQN với cùng seed → cùng tham số vật lý
+    for ep_idx, ((src_n, dst_n, vol), seed) in enumerate(
+            zip(pairs, pair_seeds), start=1):
+        # Reset với seed con → cùng trạng thái mạng ban đầu như OSPF
         topo_dqn.reset()
+        topo_dqn._rng = np.random.default_rng(seed)
         topo_dqn.step_background(intensity=0.2)
 
-        # best_path gọi send_traffic + reduce_load mỗi hop bên trong
-        dqn_path    = agent.best_path(src_n, dst_n, topo_dqn,
-                                      volume_mbps=volume)
+        dqn_path    = agent.best_path(src_n, dst_n, topo_dqn, volume_mbps=vol)
         dqn_details = collect_link_details(dqn_path, topo_dqn)
         dqn_info    = make_info(src_n, dst_n, dqn_path, dqn_details, topo_dqn)
 
-        ep_logger.log_episode(
-            algo    = "DQN",
-            episode = ep_idx,
-            info    = dqn_info,
-        )
+        ep_logger.log_episode("DQN", ep_idx, dqn_info, reward=None)
         dqn_results.append(dqn_info)
 
         dqn_str = "→".join(map(str, dqn_path))
-        print(f"  {'DQN':<5} {src_n}→{dst_n}   "
-              f"{dqn_str:<32} "
-              f"{dqn_info['total_delay']:>6.2f}ms  "
-              f"{dqn_info['avg_utilization']:>8.4f}  "
-              f"{dqn_info['avg_queue_util']:>9.4f}")
+        print(f"  {'DQN':<5} {ep_idx:<3} {src_n}→{dst_n}  {vol:>5.1f}  "
+              f"{dqn_str:<28} "
+              f"{dqn_info['total_delay']:>5.2f}ms  "
+              f"{dqn_info['avg_utilization']:>7.4f}  "
+              f"{dqn_info['avg_queue_util']:>8.4f}")
 
     # ═══════════════════════════════════════════════════════════════════
-    #  Vòng 2 — OSPF (topology riêng, send_traffic + reduce_load từng hop)
+    #  Vòng 2 — OSPF
     # ═══════════════════════════════════════════════════════════════════
     print()
     print("  [OSPF]")
 
     ospf_results = []
-    n_pairs      = len(pairs)
+    n = len(pairs)
 
-    for ep_idx, (src_n, dst_n) in enumerate(pairs, start=n_pairs + 1):
-        # Reset topology OSPF với cùng seed → cùng tham số vật lý như DQN
+    for ep_idx, ((src_n, dst_n, vol), seed) in enumerate(
+            zip(pairs, pair_seeds), start=n + 1):
+        # Cùng seed con → cùng trạng thái mạng ban đầu như DQN
         topo_ospf.reset()
+        topo_ospf._rng = np.random.default_rng(seed)
         topo_ospf.step_background(intensity=0.2)
 
-        # ospf_path_with_traffic: Dijkstra + send_traffic + reduce_load từng hop
-        # sp_details đọc sau send_traffic, trước reduce_load (trạng thái đang tải)
-        sp_path, sp_details = ospf_path_with_traffic(src_n, dst_n, topo_ospf, volume)
-        sp_info = make_info(src_n, dst_n, sp_path, sp_details, topo_ospf)
+        sp_path    = ospf_path_with_traffic(src_n, dst_n, topo_ospf, vol)
+        sp_details = collect_link_details(sp_path, topo_ospf)
+        sp_info    = make_info(src_n, dst_n, sp_path, sp_details, topo_ospf)
 
-        ep_logger.log_episode(
-            algo    = "OSPF",
-            episode = ep_idx,
-            info    = sp_info,
-        )
+        ep_logger.log_episode("OSPF", ep_idx, sp_info, reward=None)
         ospf_results.append(sp_info)
 
         sp_str  = "→".join(map(str, sp_path))
-        dqn_path_for_pair = dqn_results[ep_idx - n_pairs - 1]["path"]
-        match   = "✓" if sp_path == dqn_path_for_pair else "≠"
-        print(f"  {'OSPF':<5} {src_n}→{dst_n}   "
-              f"{sp_str:<32} "
-              f"{sp_info['total_delay']:>6.2f}ms  "
-              f"{sp_info['avg_utilization']:>8.4f}  "
-              f"{sp_info['avg_queue_util']:>9.4f}  {match}")
+        dqn_ref = dqn_results[ep_idx - n - 1]
+        match   = "✓" if sp_path == dqn_ref["path"] else "≠"
+        print(f"  {'OSPF':<5} {ep_idx-n:<3} {src_n}→{dst_n}  {vol:>5.1f}  "
+              f"{sp_str:<28} "
+              f"{sp_info['total_delay']:>5.2f}ms  "
+              f"{sp_info['avg_utilization']:>7.4f}  "
+              f"{sp_info['avg_queue_util']:>8.4f}  {match}")
 
     ep_logger.close()
 
-    # ── Summary so sánh ──────────────────────────────────────────────
+    # ── Summary tổng hợp ─────────────────────────────────────────────
     print()
-    print(f"  {'─'*70}")
-    dqn_avg_util  = float(np.mean([r["avg_utilization"] for r in dqn_results]))
-    dqn_avg_qu    = float(np.mean([r["avg_queue_util"]  for r in dqn_results]))
-    dqn_avg_delay = float(np.mean([r["total_delay"]     for r in dqn_results]))
-    sp_avg_util   = float(np.mean([r["avg_utilization"] for r in ospf_results]))
-    sp_avg_qu     = float(np.mean([r["avg_queue_util"]  for r in ospf_results]))
-    sp_avg_delay  = float(np.mean([r["total_delay"]     for r in ospf_results]))
+    print(f"  {'─'*72}")
 
-    print(f"  {'':5} {'':7} {'Avg delay':>32}  {'AvgUtil':>8}  {'AvgQUtil':>9}")
-    print(f"  {'DQN':<5} {'ALL':<7} {dqn_avg_delay:>32.2f}ms  "
-          f"{dqn_avg_util:>8.4f}  {dqn_avg_qu:>9.4f}")
-    print(f"  {'OSPF':<5} {'ALL':<7} {sp_avg_delay:>32.2f}ms  "
-          f"{sp_avg_util:>8.4f}  {sp_avg_qu:>9.4f}")
-    print(f"  {'─'*70}")
+    def gmean(results, key):
+        return float(np.mean([r[key] for r in results]))
+
+    metrics = [
+        ("Avg delay (ms)",        "total_delay"),
+        ("Avg utilization",       "avg_utilization"),
+        ("Avg queue_util",        "avg_queue_util"),
+        ("Avg dropped_data (pkt)","total_dropped_data"),
+    ]
+    print(f"  {'Metric':<28} {'DQN':>12}  {'OSPF':>12}")
+    print(f"  {'─'*56}")
+    for label, key in metrics:
+        dv = gmean(dqn_results,  key)
+        sv = gmean(ospf_results, key)
+        print(f"  {label:<28} {dv:>12.4f}  {sv:>12.4f}")
+    print(f"  {'─'*56}")
     print(f"  Demo log: {ep_logger.filepath}")
 
-    # ── Biểu đồ (nếu matplotlib có sẵn) ─────────────────────────────
+    # ── Biểu đồ ──────────────────────────────────────────────────────
     try:
         import matplotlib.pyplot as plt
 
-        pair_labels = [f"{s}→{d}" for s, d in pairs]
-        dqn_delays  = [r["total_delay"] for r in dqn_results]
-        sp_delays   = [r["total_delay"] for r in ospf_results]
-
-        x     = np.arange(len(pair_labels))
+        pair_labels = [f"{s}→{d}" for s,d,_ in pairs]
+        x     = np.arange(n_pairs)
         width = 0.35
 
-        fig, ax = plt.subplots(figsize=(11, 5))
-        bars1 = ax.bar(x - width/2, dqn_delays, width, label="DQN",  color="#4C72B0")
-        bars2 = ax.bar(x + width/2, sp_delays,  width, label="OSPF", color="#DD8452")
+        def vals(results, key):
+            return [r[key] for r in results]
 
-        ax.set_xlabel("Node pair")
-        ax.set_ylabel("Total delay (ms)")
-        ax.set_title("So sánh độ trễ DQN vs OSPF (topology độc lập, cùng seed)")
-        ax.set_xticks(x)
-        ax.set_xticklabels(pair_labels)
-        ax.legend()
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
+        color_dqn  = "#4C72B0"
+        color_ospf = "#DD8452"
 
-        for rect in list(bars1) + list(bars2):
+        # ── Helper vẽ từng biểu đồ riêng biệt ───────────────────────
+        def create_bar_chart(dqn_vals, ospf_vals, title, ylabel, suffix):
+            fig, ax = plt.subplots(figsize=(11, 7))
+            b1 = ax.bar(x - width/2, dqn_vals,  width, label="DQN",  color=color_dqn)
+            b2 = ax.bar(x + width/2, ospf_vals, width, label="OSPF", color=color_ospf)
+
+            ax.set_title(title, fontsize=12, fontweight="bold")
+            ax.set_ylabel(ylabel, fontsize=10)
+            ax.set_xticks(x)
+            ax.set_xticklabels(pair_labels, rotation=30, ha="right")
+            ax.legend(fontsize=9)
+            ax.grid(axis="y", linestyle="--", alpha=0.4)
+
+            for rect in list(b1) + list(b2):
+                h = rect.get_height()
+                if h > 0:
+                    ax.annotate(f"{h:.2f}",
+                                xy=(rect.get_x()+rect.get_width()/2, h),
+                                xytext=(0,2), textcoords="offset points",
+                                ha="center", va="bottom", fontsize=7)
+
+            fig.suptitle(f"DQN vs OSPF — {n_pairs} bộ ngẫu nhiên (seed={DEMO_SEED})",
+                         fontsize=13, fontweight="bold", y=0.98)
+
+            chart_path = os.path.join(log_dir, f"demo_comparison_{suffix}.png")
+            plt.savefig(chart_path, dpi=150, bbox_inches="tight")
+            print(f"  Chart saved: {chart_path}")
+            plt.close(fig)   # Đóng figure để không chiếm bộ nhớ
+
+        # ═══════════════════════════════════════════════════════════════
+        #  5 BIỂU ĐỒ RIÊNG BIỆT
+        # ═══════════════════════════════════════════════════════════════
+
+        # Biểu đồ 1: Delay
+        create_bar_chart(
+            vals(dqn_results,  "total_delay"),
+            vals(ospf_results, "total_delay"),
+            "1. So sánh delay trung bình từng bộ",
+            "Delay (ms)",
+            "1_delay"
+        )
+
+        # Biểu đồ 2: Avg load
+        create_bar_chart(
+            vals(dqn_results,  "avg_load"),
+            vals(ospf_results, "avg_load"),
+            "2. So sánh băng thông sử dụng TB từng bộ",
+            "Avg load (Mbps)",
+            "2_load"
+        )
+
+        # Biểu đồ 3: Avg queue_util
+        create_bar_chart(
+            vals(dqn_results,  "avg_queue_util"),
+            vals(ospf_results, "avg_queue_util"),
+            "3. So sánh hàng đợi sử dụng TB từng bộ",
+            "Avg queue_util [0,1]",
+            "3_queue"
+        )
+
+        # Biểu đồ 4: Total dropped_data
+        create_bar_chart(
+            vals(dqn_results,  "total_dropped_data"),
+            vals(ospf_results, "total_dropped_data"),
+            "4. So sánh packets bị drop từng bộ",
+            "Dropped data (packets)",
+            "4_dropped"
+        )
+
+        # Biểu đồ 5: Tổng hợp tất cả bộ (summary)
+        print("  Vẽ biểu đồ 5: tổng hợp...")
+        fig5, ax5 = plt.subplots(figsize=(11, 7))
+
+        metrics_summary = [
+            ("Delay TB (ms)",        "total_delay"),
+            ("Load TB (Mbps)",       "avg_load"),
+            ("Queue util TB",        "avg_queue_util"),
+            ("Dropped TB (pkts)",    "total_dropped_data"),
+        ]
+        m_labels = [m[0] for m in metrics_summary]
+        dqn_agg  = [gmean(dqn_results,  m[1]) for m in metrics_summary]
+        ospf_agg = [gmean(ospf_results, m[1]) for m in metrics_summary]
+
+        xm = np.arange(len(m_labels))
+        b1 = ax5.bar(xm - width/2, dqn_agg,  width, label="DQN",  color=color_dqn)
+        b2 = ax5.bar(xm + width/2, ospf_agg, width, label="OSPF", color=color_ospf)
+
+        ax5.set_title("5. So sánh tổng hợp tất cả bộ (trung bình)",
+                      fontsize=12, fontweight="bold")
+        ax5.set_xticks(xm)
+        ax5.set_xticklabels(m_labels, fontsize=9)
+        ax5.legend(fontsize=9)
+        ax5.grid(axis="y", linestyle="--", alpha=0.4)
+
+        for rect in list(b1) + list(b2):
             h = rect.get_height()
-            ax.annotate(f"{h:.1f}",
-                        xy=(rect.get_x() + rect.get_width() / 2, h),
-                        xytext=(0, 3), textcoords="offset points",
-                        ha="center", va="bottom", fontsize=8)
+            if h > 0:
+                ax5.annotate(f"{h:.3f}",
+                             xy=(rect.get_x()+rect.get_width()/2, h),
+                             xytext=(0,2), textcoords="offset points",
+                             ha="center", va="bottom", fontsize=8)
 
-        plt.tight_layout()
-        chart_path = os.path.join(log_dir, "demo_delay_comparison.png")
-        plt.savefig(chart_path, dpi=150)
-        print(f"  Chart saved: {chart_path}")
-        plt.show()
+        fig5.suptitle(f"DQN vs OSPF — {n_pairs} bộ ngẫu nhiên (seed={DEMO_SEED})",
+                      fontsize=13, fontweight="bold", y=0.98)
+
+        chart_path5 = os.path.join(log_dir, "demo_comparison_5_summary.png")
+        plt.savefig(chart_path5, dpi=150, bbox_inches="tight")
+        print(f"  Chart saved: {chart_path5}")
+        plt.close(fig5)
+
+        print("\n  ✓ Đã lưu 5 biểu đồ RIÊNG BIỆT vào thư mục logs/DQN/")
+
     except ImportError:
         print("\n  (matplotlib chưa cài — bỏ qua biểu đồ. pip install matplotlib)")
 
-
-# ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -369,3 +450,22 @@ if __name__ == "__main__":
         run_eval(args.checkpoint, args.render)
     elif args.mode == "demo":
         run_demo(args.checkpoint)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode",       choices=["check","train","eval","demo"],
+                        default="check")
+    parser.add_argument("--episodes",   type=int, default=None)
+    parser.add_argument("--n-pairs",    type=int, default=8,
+                        help="Số bộ (src,dst,vol) ngẫu nhiên cho demo")
+    parser.add_argument("--checkpoint", default="checkpoints/DQN/dqn_final.pt")
+    parser.add_argument("--render",     action="store_true")
+    args = parser.parse_args()
+
+    if args.mode == "check":
+        run_env_check()
+    elif args.mode == "train":
+        run_train(args.episodes)
+    elif args.mode == "eval":
+        run_eval(args.checkpoint, args.render)
+    elif args.mode == "demo":
+        run_demo(args.checkpoint, n_pairs=args.n_pairs)

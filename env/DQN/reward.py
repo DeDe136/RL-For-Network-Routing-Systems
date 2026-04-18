@@ -36,7 +36,7 @@ Shaping reward (intermediate hop) — cùng thứ tự, hệ số nhỏ hơn.
 
 BANDWIDTH_MAX      = 200.0   # Mbps
 QUEUE_SIZE_MAX     = 100.0   # packets
-DROP_PENALTY_SCALE = 50.0    # packets — 50 packets drop → phạt tối đa
+DROP_PENALTY_SCALE = 100.0    # packets — 50 packets drop → phạt tối đa
 
 
 def compute_final_reward(
@@ -110,7 +110,7 @@ def compute_shaping_reward(
     shaping -= min(1.0, current_link_delay / 10.0) * 0.07
 
     # Phạt dropped_data của link này
-    shaping -= min(1.0, current_link_dropped / 10.0) * 0.10
+    shaping -= min(1.0, current_link_dropped / 50.0) * 0.10
 
     # Tie-breaker: thưởng capacity cao
     if current_link_bandwidth > 0:
