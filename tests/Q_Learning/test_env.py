@@ -91,6 +91,7 @@ class TestStep:
         make_env._current_node = 0
         make_env._dst = 1
         make_env._src = 0
+        make_env._path = [0]  # Cập nhật _path để đồng bộ với _current_node
         _, reward, terminated, truncated, _ = make_env.step(1)
         assert terminated
         assert reward > -2.0
@@ -99,6 +100,7 @@ class TestStep:
         make_env.reset()
         make_env._current_node = 0
         make_env._dst = 7
+        make_env._path = [0]  # Cập nhật _path để đồng bộ với _current_node
         make_env._hops = make_env.max_hops  # already at limit
         _, reward, _, truncated, _ = make_env.step(1)
         # Sau khi hops >= max_hops, step tiếp theo phải truncate

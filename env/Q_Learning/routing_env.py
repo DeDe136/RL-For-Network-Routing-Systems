@@ -116,17 +116,17 @@ class NetworkRoutingEnv(gym.Env):
             # Drop → truncated, phạt nặng.
             # Ưu tiên cao nhất: drop thắng kể cả khi current_node == dst.
             truncated = True
-            reward = -1 + compute_step_reward_q_learning(current_link_delay=link.delay)
+            reward = -1.0 + compute_step_reward_q_learning(current_link_delay=link.delay)
 
         elif self._current_node == self._dst:
             # Đến đích thành công, không có drop
             terminated = True
-            reward = 1 + compute_step_reward_q_learning(current_link_delay=link.delay)
+            reward = 1.0 + compute_step_reward_q_learning(current_link_delay=link.delay)
 
         elif self._hops >= self.max_hops:
             # Hết hop mà chưa đến đích
             truncated = True
-            reward = -1 + compute_step_reward_q_learning(current_link_delay=link.delay)
+            reward = -1.0 + compute_step_reward_q_learning(current_link_delay=link.delay)
 
         else:
             # Step trung gian: shaping reward dựa trên link vừa đi qua
