@@ -14,7 +14,7 @@ dqn:
   gamma: 0.99
   epsilon: 1.0
   eps_min: 0.01
-  eps_decay: 0.9995
+  eps_decay: 0.9997
   batch_size: 64
   buffer_capacity: 10000
   target_update_freq: 100

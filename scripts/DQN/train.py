@@ -75,9 +75,7 @@ def main():
     )
 
     print(f"Training DQN | {num_episodes} episodes | device={agent.device}")
-    print(f"  {agent.network_summary()}")
-    print(f"  buffer_capacity={agent.memory.capacity} | "
-          f"purge_threshold={agent.memory.purge_threshold:.0%}\n")
+    print(f"  {agent.network_summary()}\n")
 
     for ep in range(1, num_episodes + 1):
         obs, _ = environment.reset()

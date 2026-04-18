@@ -221,10 +221,10 @@ def run_demo(checkpoint: str):
     # ═══════════════════════════════════════════════════════════════════
     #  Vòng 1 — DQN
     # ═══════════════════════════════════════════════════════════════════
-    print(f"  {'─'*70}")
+    print(f"  {'─'*80}")
     print(f"  {'Algo':<5} {'Pair':<7} {'Path':<32} {'Delay':>8}  "
           f"{'AvgUtil':>8}  {'AvgQUtil':>9}")
-    print(f"  {'─'*70}")
+    print(f"  {'─'*80}")
     print("  [DQN]")
 
     dqn_results = []   # lưu để so sánh + biểu đồ
@@ -244,7 +244,6 @@ def run_demo(checkpoint: str):
             algo    = "DQN",
             episode = ep_idx,
             info    = dqn_info,
-            reward  = None,
         )
         dqn_results.append(dqn_info)
 
@@ -278,7 +277,6 @@ def run_demo(checkpoint: str):
             algo    = "OSPF",
             episode = ep_idx,
             info    = sp_info,
-            reward  = None,
         )
         ospf_results.append(sp_info)
 

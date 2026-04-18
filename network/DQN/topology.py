@@ -347,9 +347,13 @@ class NetworkTopology:
     #  Helpers                                                             #
     # ------------------------------------------------------------------ #
 
+    # Lấy trọng số delay trên từng link để tính đường đi ngắn nhất dựa trên OSPF
+    def weight(self, u, v, d):
+        return self._link_attrs[(u, v)].delay
+
     def shortest_path(self, src: int, dst: int) -> List[int]:
         try:
-            return nx.shortest_path(self.graph, src, dst, weight="delay")
+            return nx.shortest_path(self.graph, src, dst, weight=self.weight)
         except nx.NetworkXNoPath:
             return []
 
