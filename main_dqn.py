@@ -196,6 +196,7 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
             "avg_queue_util":    avg_metric(details, "queue_util"),
             "avg_bandwidth":     avg_metric(details, "bandwidth"),
             "avg_load":          avg_metric(details, "load"),
+            "avg_queue_used_cur": avg_metric(details, "queue_used_cur"),
             "total_dropped_data":sum(d["dropped_data"] for d in details),
             "link_details":      details,
             **topo_ref.summary(),
@@ -314,8 +315,8 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         def vals(results, key):
             return [r[key] for r in results]
 
-        color_dqn  = "#4C72B0"
-        color_ospf = "#DD8452"
+        color_dqn  = "#2E86AB"
+        color_ospf = "#F18F01"
 
         # ── Helper vẽ từng biểu đồ riêng biệt ───────────────────────
         def create_bar_chart(dqn_vals, ospf_vals, title, ylabel, suffix):
@@ -370,10 +371,10 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
 
         # Biểu đồ 3: Avg queue_util
         create_bar_chart(
-            vals(dqn_results,  "avg_queue_util"),
-            vals(ospf_results, "avg_queue_util"),
-            "3. So sánh hàng đợi sử dụng TB từng bộ",
-            "Avg queue_util [0,1]",
+            vals(dqn_results,  "avg_queue_used_cur"),
+            vals(ospf_results, "avg_queue_used_cur"),
+            "3. So sánh packets đang được sử dụng TB trên hàng đợi từng bộ",
+            "Avg queue_used_cur (packets)",
             "3_queue"
         )
 
@@ -387,8 +388,7 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         )
 
         # Biểu đồ 5: Tổng hợp tất cả bộ (summary)
-        print("  Vẽ biểu đồ 5: tổng hợp...")
-        fig5, ax5 = plt.subplots(figsize=(11, 7))
+        fig, (ax5, ax6) = plt.subplots(2, 1, figsize=(11, 10))
 
         metrics_summary = [
             ("Delay TB (ms)",        "total_delay"),
@@ -396,36 +396,80 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
             ("Queue util TB",        "avg_queue_util"),
             ("Dropped TB (pkts)",    "total_dropped_data"),
         ]
+
         m_labels = [m[0] for m in metrics_summary]
         dqn_agg  = [gmean(dqn_results,  m[1]) for m in metrics_summary]
         ospf_agg = [gmean(ospf_results, m[1]) for m in metrics_summary]
 
         xm = np.arange(len(m_labels))
+        width = 0.35
+
+        # ─────────────────────────────────────────
+        #  Biểu đồ trên: giá trị tuyệt đối
+        # ─────────────────────────────────────────
         b1 = ax5.bar(xm - width/2, dqn_agg,  width, label="DQN",  color=color_dqn)
         b2 = ax5.bar(xm + width/2, ospf_agg, width, label="OSPF", color=color_ospf)
 
-        ax5.set_title("5. So sánh tổng hợp tất cả bộ (trung bình)",
-                      fontsize=12, fontweight="bold")
+        ax5.set_title("5A. So sánh giá trị trung bình", fontsize=12, fontweight="bold")
         ax5.set_xticks(xm)
         ax5.set_xticklabels(m_labels, fontsize=9)
-        ax5.legend(fontsize=9)
+        ax5.legend()
         ax5.grid(axis="y", linestyle="--", alpha=0.4)
 
+        # annotate giá trị
         for rect in list(b1) + list(b2):
             h = rect.get_height()
             if h > 0:
                 ax5.annotate(f"{h:.3f}",
-                             xy=(rect.get_x()+rect.get_width()/2, h),
-                             xytext=(0,2), textcoords="offset points",
-                             ha="center", va="bottom", fontsize=8)
+                            xy=(rect.get_x()+rect.get_width()/2, h),
+                            xytext=(0,2), textcoords="offset points",
+                            ha="center", va="bottom", fontsize=8)
 
-        fig5.suptitle(f"DQN vs OSPF — {n_pairs} bộ ngẫu nhiên (seed={DEMO_SEED})",
-                      fontsize=13, fontweight="bold", y=0.98)
+        # ─────────────────────────────────────────
+        #  Biểu đồ dưới: % improvement
+        # ─────────────────────────────────────────
+        def improvement(dqn_vals, ospf_vals):
+            res = []
+            for d, o in zip(dqn_vals, ospf_vals):
+                if o == 0:
+                    if d == 0:
+                        res.append(0.0)          # cả hai đều tốt như nhau
+                    else:
+                        res.append(-100.0)       # DQN tệ hơn cực mạnh
+                else:
+                    res.append((o - d) / o * 100.0)
+            return res
+
+        improve_vals = improvement(dqn_agg, ospf_agg)
+
+        colors = ["green" if v >= 0 else "red" for v in improve_vals]
+
+        bars = ax6.bar(xm, improve_vals, color=colors)
+
+        ax6.set_title("5B. % cải thiện của DQN so với OSPF",
+                    fontsize=12, fontweight="bold")
+        ax6.set_ylabel("Improvement (%)")
+        ax6.set_xticks(xm)
+        ax6.set_xticklabels(m_labels, fontsize=9)
+        ax6.grid(axis="y", linestyle="--", alpha=0.4)
+
+        # annotate %
+        for rect, val in zip(bars, improve_vals):
+            ax6.annotate(f"{val:+.2f}%",
+                        xy=(rect.get_x()+rect.get_width()/2, rect.get_height()),
+                        xytext=(0,3), textcoords="offset points",
+                        ha="center", va="bottom", fontsize=9, fontweight="bold")
+
+        # ─────────────────────────────────────────
+        #  Title chung + save
+        # ─────────────────────────────────────────
+        fig.suptitle(f"DQN vs OSPF — Summary (value + improvement) (seed={DEMO_SEED})",
+                    fontsize=13, fontweight="bold", y=0.98)
 
         chart_path5 = os.path.join(log_dir, "demo_comparison_5_summary.png")
         plt.savefig(chart_path5, dpi=150, bbox_inches="tight")
         print(f"  Chart saved: {chart_path5}")
-        plt.close(fig5)
+        plt.close(fig)
 
         print("\n  ✓ Đã lưu 5 biểu đồ RIÊNG BIỆT vào thư mục logs/DQN/")
 
@@ -433,23 +477,6 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         print("\n  (matplotlib chưa cài — bỏ qua biểu đồ. pip install matplotlib)")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode",       choices=["check","train","eval","demo"],
-                        default="check")
-    parser.add_argument("--episodes",   type=int, default=None)
-    parser.add_argument("--checkpoint", default="checkpoints/DQN/dqn_final.pt")
-    parser.add_argument("--render",     action="store_true")
-    args = parser.parse_args()
-
-    if args.mode == "check":
-        run_env_check()
-    elif args.mode == "train":
-        run_train(args.episodes)
-    elif args.mode == "eval":
-        run_eval(args.checkpoint, args.render)
-    elif args.mode == "demo":
-        run_demo(args.checkpoint)
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode",       choices=["check","train","eval","demo"],
