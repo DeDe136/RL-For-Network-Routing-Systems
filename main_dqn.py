@@ -232,7 +232,7 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         # Reset với seed con → cùng trạng thái mạng ban đầu như OSPF
         topo_dqn.reset()
         topo_dqn._rng = np.random.default_rng(seed)
-        topo_dqn.step_background(intensity=0.2)
+        topo_dqn.step_background(intensity=0.3)
 
         dqn_path    = agent.best_path(src_n, dst_n, topo_dqn, volume_mbps=vol)
         dqn_details = collect_link_details(dqn_path, topo_dqn)
@@ -262,7 +262,7 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         # Cùng seed con → cùng trạng thái mạng ban đầu như DQN
         topo_ospf.reset()
         topo_ospf._rng = np.random.default_rng(seed)
-        topo_ospf.step_background(intensity=0.2)
+        topo_ospf.step_background(intensity=0.3)
 
         sp_path    = ospf_path_with_traffic(src_n, dst_n, topo_ospf, vol)
         sp_details = collect_link_details(sp_path, topo_ospf)

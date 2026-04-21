@@ -20,6 +20,17 @@ dqn:
   target_update_freq: 100
   learn_start: 64          # bắt đầu học khi buffer có đủ 1 batch
 
+  # ── D3QN improvements (bật/tắt từng phần) ──
+  use_double:  true    # Double DQN  — chống overestimation
+  use_dueling: true    # Dueling DQN — tách V(s) và A(s,a)
+  use_per:     true    # Prioritized Experience Replay
+
+  # ── PER hyperparameters ──
+  per_alpha:        0.6      # mức ưu tiên [0=uniform, 1=full PER]
+  per_beta_start:   0.4      # IS weight ban đầu (tăng dần → 1.0)
+  per_beta_frames:  100000   # số steps để β đạt 1.0
+  per_eps:          0.000001 # epsilon nhỏ tránh priority = 0
+
 # Cấu hình huấn luyện chung
 training:
   num_episodes: 3000
