@@ -1,7 +1,7 @@
 """
 scripts/DQN/train.py
 
-Training loop cho DQN Agent trên NetworkRouting-DQN-v0.
+Training loop cho D3QN Agent (Double + Dueling + PER) trên NetworkRouting-DQN-v0.
 
 Chạy:
     python scripts/DQN/train.py
@@ -9,7 +9,7 @@ Chạy:
 
 Output:
     checkpoints/DQN/dqn_ep{N}.pt, dqn_final.pt
-    logs/DQN/training.csv          — metrics mỗi episode (Logger)
+    logs/DQN/training.csv          — metrics tổng hợp mỗi episode (Logger)
     logs/DQN/train_episodes.csv    — chi tiết từng episode + per-link (EpisodeLogger)
 """
 
@@ -74,16 +74,17 @@ def main():
         max_hops = ecfg["env"]["max_hops"],
     )
 
-    print(f"Training DQN | {num_episodes} episodes | device={agent.device}")
+    print(f"Training D3QN | {num_episodes} episodes | device={agent.device}")
     print(f"  {agent.network_summary()}\n")
 
     for ep in range(1, num_episodes + 1):
         obs, _ = environment.reset()
-        ep_reward  = 0.0
-        ep_loss    = 0.0
-        steps      = 0
-        done       = False
-        buf_before = len(agent.memory)
+        ep_reward    = 0.0
+        ep_loss      = 0.0
+        ep_beta      = 0.0   # β PER trung bình trong episode
+        ep_mean_prio = 0.0   # mean priority trung bình trong episode
+        steps        = 0
+        done         = False
         agent.train_mode()
 
         while not done:
@@ -95,15 +96,19 @@ def main():
             agent.remember(obs, action, reward, next_obs, done)
             result = agent.update()
 
-            ep_reward += reward
-            ep_loss   += result.get("loss") or 0.0
-            steps     += 1
-            obs        = next_obs
+            ep_reward    += reward
+            ep_loss      += result.get("loss")      or 0.0
+            ep_beta      += result.get("beta")      or 0.0
+            ep_mean_prio += result.get("mean_priority") or 0.0
+            steps        += 1
+            obs           = next_obs
+
+        avg_steps = max(steps, 1)
 
         # ── Logger: metrics tổng hợp ──────────────────────────────────
-        logger.log({
+        log_data = {
             "reward":       ep_reward,
-            "loss":         ep_loss / max(steps, 1),
+            "loss":         ep_loss      / avg_steps,
             "epsilon":      agent.epsilon,
             "hops":         info["hops"],
             "delay_ms":     info["total_delay"],
@@ -111,10 +116,15 @@ def main():
             "avg_util":     info["avg_utilization"],
             "avg_q_util":   info["avg_queue_util"],
             "buf_size":     len(agent.memory),
-        })
+            "buf_fill_pct": agent.memory.fill_ratio * 100,
+        }
+        # Thêm PER metrics nếu đang dùng PER
+        if agent.use_per:
+            log_data["beta"]      = ep_beta      / avg_steps
+            log_data["mean_prio"] = ep_mean_prio / avg_steps
+        logger.log(log_data)
 
         # ── EpisodeLogger: chi tiết per-link ─────────────────────────
-        # Cột "algo" = "DQN" cho tất cả các dòng trong training
         ep_logger.log_episode(
             algo    = "DQN",
             episode = ep,
