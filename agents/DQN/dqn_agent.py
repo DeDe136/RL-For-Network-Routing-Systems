@@ -251,7 +251,9 @@ class DQNAgent(BaseAgent):
                 next_q_online = self.q_net(next_states_t)   # (B, 8)
                 next_q_online_masked = next_q_online.clone()
                 next_q_online_masked[~mask] = float("-inf")
-                best_actions = next_q_online_masked.argmax(dim=1, keepdim=True)  # (B,1)
+                # Tie-breaking random: chọn ngẫu nhiên trong tất cả action
+                # có Q bằng nhau (không thiên vị về index nhỏ nhất)
+                best_actions = self._random_argmax_batch(next_q_online_masked)  # (B,1)
  
                 next_q_target = self.target_net(next_states_t)  # (B, 8)
                 next_q_values = next_q_target.gather(1, best_actions)  # (B,1)
@@ -333,6 +335,35 @@ class DQNAgent(BaseAgent):
             )[0]
             mask[i, valid] = True
         return mask
+    
+    def _random_argmax_batch(self, q: torch.Tensor) -> torch.Tensor:
+        """
+        Tie-breaking random cho cả batch: khi nhiều action có Q bằng nhau,
+        chọn ngẫu nhiên đều trong số đó thay vì luôn lấy index đầu tiên.
+
+        Lý do:
+        torch.argmax() + torch.max() luôn trả về index nhỏ nhất khi tie.
+        Điều này tạo bias hệ thống — agent có xu hướng chọn node có index
+        nhỏ khi Q bằng nhau, dẫn đến policy không đa dạng.
+        Random tie-breaking tạo exploration tốt hơn trong Double DQN.
+
+        Args:
+            q: (B, n_actions) — Q-values đã mask (invalid = -inf).
+
+        Returns:
+            (B, 1) LongTensor — action được chọn cho mỗi sample trong batch.
+        """
+        B         = q.shape[0]
+        chosen    = torch.zeros(B, dtype=torch.long, device=self.device)
+        max_vals  = q.max(dim=1, keepdim=True)[0]            # (B, 1)
+        is_max    = (q == max_vals)                           # (B, n_actions) bool
+
+        for i in range(B):
+            candidates = torch.where(is_max[i])[0]           # indices của max
+            picked     = candidates[torch.randint(len(candidates), (1,))]
+            chosen[i]  = picked
+
+        return chosen.unsqueeze(1)   # (B, 1)
 
     def best_path(self, src: int, dst: int, topo,
                   volume_mbps: float = 10.0,

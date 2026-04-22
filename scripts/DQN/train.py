@@ -1,5 +1,5 @@
 """
-scripts/dqn_train.py
+scripts/DQN/train.py
 
 Training loop cho DQN Agent trên NetworkRouting-DQN-v0.
 
@@ -92,7 +92,6 @@ def main():
                 environment.step(action)
             done = terminated or truncated
 
-            # push() tự động purge khi fill_ratio > purge_threshold
             agent.remember(obs, action, reward, next_obs, done)
             result = agent.update()
 

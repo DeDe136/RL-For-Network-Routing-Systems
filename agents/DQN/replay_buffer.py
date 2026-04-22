@@ -236,7 +236,7 @@ class PrioritizedReplayBuffer:
         Thêm transition với max priority (đảm bảo được sample ít nhất 1 lần).
         """
         max_p = self._tree.max_priority
-        self._tree.add(max_p ** self.alpha,
+        self._tree.add(max_p,
                        (state, action, reward, next_state, float(done)))
 
     # ── Sample ───────────────────────────────────────────────────────
@@ -270,7 +270,7 @@ class PrioritizedReplayBuffer:
             lo     = segment * i
             hi     = segment * (i + 1)
             value  = np.random.uniform(lo, hi)
-            # Clamp value vào [per_eps, total - per_eps] tránh edge case
+            # Clamp value vào [per_eps, total - per_eps] tránh floating point precision lỗi
             value  = max(self.per_eps, min(value, self._tree.total - self.per_eps))
             idx, p, data = self._tree.sample(value)
             tree_indices.append(idx)
@@ -280,7 +280,8 @@ class PrioritizedReplayBuffer:
         # IS weights: w_i = (N · P(i))^(-β) / max_j w_j
         N          = len(self)
         probs      = np.array(priorities, dtype=np.float64) / self._tree.total
-        probs      = np.clip(probs, 1e-12, 1.0)          # tránh log(0)
+        # tránh log(0) và xác suất lớn 1.0 khi hệ thống làm tròn trong quá trình tính toán
+        probs      = np.clip(probs, 1e-12, 1.0)
         raw_w      = (N * probs) ** (-beta)
         is_weights = (raw_w / raw_w.max()).astype(np.float32)
 
