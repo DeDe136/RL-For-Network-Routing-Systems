@@ -14,7 +14,7 @@ Output:
 """
 
 import sys, os, argparse, yaml
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 import env  # noqa — kích hoạt gymnasium.register
 import gymnasium as gym

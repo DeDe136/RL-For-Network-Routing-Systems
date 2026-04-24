@@ -104,16 +104,17 @@ class DQNAgent(BaseAgent):
         self.per_eps         = config.get("per_eps",          1e-6)
         self._per_frame      = 0   # đếm số update steps để tăng β
  
-        # Thiết bị tính toán (CPU/GPU)
-        if hasattr(torch, 'xpu') and torch.xpu.is_available():
-            self.device = torch.device("xpu")
-            print("🚀 Đang dùng Intel XPU (GPU Intel)")
-        elif torch.cuda.is_available():
-            self.device = torch.device("cuda")
-            print("🚀 Đang dùng NVIDIA CUDA")
-        else:
-            self.device = torch.device("cpu")
-            print("📟 Đang dùng CPU")
+        # # Thiết bị tính toán (CPU/GPU)
+        # if hasattr(torch, 'xpu') and torch.xpu.is_available():
+        #     self.device = torch.device("xpu")
+        #     print("🚀 Đang dùng Intel XPU (GPU Intel)")
+        # elif torch.cuda.is_available():
+        #     self.device = torch.device("cuda")
+        #     print("🚀 Đang dùng NVIDIA CUDA")
+        # else:
+        #     self.device = torch.device("cpu")
+        #     print("📟 Đang dùng CPU")
+        self.device = torch.device("cpu")
  
         # ── Networks (Dueling hoặc Standard) ─────────────────────────
         NetworkClass = DuelingQNetwork if self.use_dueling else QNetwork

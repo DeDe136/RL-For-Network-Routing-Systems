@@ -13,12 +13,12 @@ dqn:
   lr: 0.001
   gamma: 0.99
   epsilon: 1.0
-  eps_min: 0.01
-  eps_decay: 0.999997
+  eps_min: 0.05
+  eps_decay: 0.99996879
   batch_size: 64
-  buffer_capacity: 10000
+  buffer_capacity: 20000
   target_update_freq: 100
-  learn_start: 64          # bắt đầu học khi buffer có đủ 1 batch
+  learn_start: 500          # bắt đầu học khi buffer có đủ 1 batch
 
   # ── D3QN improvements (bật/tắt từng phần) ──
   use_double:  true    # Double DQN  — chống overestimation
@@ -28,12 +28,12 @@ dqn:
   # ── PER hyperparameters ──
   per_alpha:        0.6      # mức ưu tiên [0=uniform, 1=full PER]
   per_beta_start:   0.4      # IS weight ban đầu (tăng dần → 1.0)
-  per_beta_frames:  100000   # số steps để β đạt 1.0
+  per_beta_frames:  120000   # số steps để β đạt 1.0
   per_eps:          0.000001 # epsilon nhỏ tránh priority = 0
 
 # Cấu hình huấn luyện chung
 training:
-  num_episodes: 3000
+  num_episodes: 40000
   print_every: 200
   save_every: 500
   checkpoint_dir: checkpoints

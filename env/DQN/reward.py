@@ -36,7 +36,7 @@ Shaping reward (intermediate hop) — cùng thứ tự, hệ số nhỏ hơn.
 
 BANDWIDTH_MAX      = 200.0   # Mbps
 QUEUE_SIZE_MAX     = 100.0   # packets
-DROP_PENALTY_SCALE = 100.0    # packets — 50 packets drop → phạt tối đa
+DROP_PENALTY_SCALE = 50.0    # packets — 50 packets drop → phạt tối đa
 
 
 def compute_final_reward(

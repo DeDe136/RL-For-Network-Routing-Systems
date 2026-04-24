@@ -186,6 +186,10 @@ class NetworkRoutingEnv(gym.Env):
                 current_link_dropped     = link.dropped_data,
             )
 
+        # Sau khi di chuyển đến action (node mới)
+        if action in self._path[:-1]:  # node này đã đi qua trước đó
+            reward = -0.3  # phạt nhẹ khi tạo vòng lặp
+
         info = self._info()
         if self.render_mode == "human":
             status = "success" if terminated else \
