@@ -7,13 +7,17 @@ Vòng lặp một episode:
   reset() → randomize_links + step_background → sinh demand (src,dst,vol)
   step(action) lặp lại:
     1. Kiểm tra link hợp lệ (has_link). Nếu không → phạt -0.5, giữ vị trí.
-    2. Lưu link vừa chọn (cho shaping reward).
-    3. Di chuyển cur → action, tăng hops.
-    4. send_traffic(path, volume, is_first_hop) — MDP model.
+    2. Kiểm tra is_loop (node đã thăm chưa) TRƯỚC khi di chuyển.
+    3. Lưu link vừa chọn (cho shaping reward).
+    4. Di chuyển cur → action, tăng hops, cập nhật visited_mask.
+    5. Nếu is_loop → tăng self._loop_count.
+    6. send_traffic(path, volume, is_first_hop) — MDP model.
        dropped_data tích lũy nếu có overflow, KHÔNG truncated.
-    5. reduce_load(path) — leaky bucket + decay ngoài path.
+    7. reduce_load(path) — leaky bucket + decay ngoài path.
        dropped_data có thể tăng thêm, KHÔNG truncated.
-    6. Tính reward (phạt dropped_data qua trọng số, không cắt episode).
+    8. Tính reward:
+       - intermediate: compute_shaping_reward(..., is_loop=is_loop)
+       - terminal:     compute_final_reward(..., loop_count=self._loop_count)
     7. Kiểm tra điều kiện kết thúc.
 
 Điều kiện kết thúc — chỉ 2 trường hợp:
@@ -25,10 +29,11 @@ Vòng lặp một episode:
 Observation (dict):
   current_node : int
   dst_node     : int
+  visited_mask : np.ndarray (NUM_NODES,) — 1.0 nếu node đã đi qua
   link_states  : (26, 6) — delay_norm, bw_norm, queue_size_cur_norm,
                             utilization, queue_util, drop_norm
 
-obs_to_flat() → shape (158,) = 2 + 26×6 — input cho DQN.
+obs_to_flat() → shape (180,) = 8 + 8 + 8 + 26×6 — input cho DQN.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -75,6 +80,8 @@ class NetworkRoutingEnv(gym.Env):
         self._hops:              int   = 0
         self._total_delay:       float = 0.0
         self._total_dropped_data:float = 0.0   # tích lũy data bị drop (packets)
+        self._visited_mask:      np.ndarray = np.zeros(NUM_NODES, dtype=np.float32)
+        self._loop_count:        int   = 0   # số lần đi vào node đã thăm
 
     # ------------------------------------------------------------------ #
     #  Gymnasium API                                                       #
@@ -101,6 +108,10 @@ class NetworkRoutingEnv(gym.Env):
         self._hops               = 0
         self._total_delay        = 0.0
         self._total_dropped_data = 0.0
+        self._loop_count         = 0
+
+        self._visited_mask = np.zeros(NUM_NODES, dtype=np.float32)
+        self._visited_mask[self._src] = 1.0
 
         return self._obs(), {}
 
@@ -120,6 +131,10 @@ class NetworkRoutingEnv(gym.Env):
                 self._render_step(action, reward, "invalid link")
             return self._obs(), reward, terminated, truncated, info
 
+        # ── Kiểm tra loop TRƯỚC khi di chuyển ────────────────────────
+        # visited_mask[action] == 1.0 → node này đã đi qua rồi
+        is_loop = (self._visited_mask[action] > 0.0)
+
         # Lưu link trước khi di chuyển (dùng cho shaping reward)
         link = self.topo.link(self._current_node, action)
 
@@ -127,6 +142,11 @@ class NetworkRoutingEnv(gym.Env):
         self._hops         += 1
         self._current_node  = action
         self._path.append(action)
+
+        # Cập nhật visited_mask và loop_count
+        if is_loop:
+            self._loop_count += 1
+        self._visited_mask[action] = 1.0
 
         # ── send_traffic theo MDP model ───────────────────────────────
         # Khi có drop: dropped_data tích lũy trên link, queue_used_cur
@@ -160,6 +180,7 @@ class NetworkRoutingEnv(gym.Env):
                 avg_bandwidth      = avg_bw,
                 avg_queue_size     = avg_qsize,
                 total_dropped_data = self._total_dropped_data,
+                loop_count         = self._loop_count,
             )
 
         elif self._hops >= self.max_hops - 1:
@@ -173,6 +194,7 @@ class NetworkRoutingEnv(gym.Env):
                 avg_bandwidth      = avg_bw,
                 avg_queue_size     = avg_qsize,
                 total_dropped_data = self._total_dropped_data,
+                loop_count         = self._loop_count,
             )
 
         else:
@@ -184,12 +206,9 @@ class NetworkRoutingEnv(gym.Env):
                 current_link_bandwidth   = link.bandwidth,
                 current_link_queue_size  = link.queue_size_cur,
                 current_link_dropped     = link.dropped_data,
+                is_loop                  = is_loop,
             )
-
-        # Sau khi di chuyển đến action (node mới)
-        if action in self._path[:-1]:  # node này đã đi qua trước đó
-            reward = -0.3  # phạt nhẹ khi tạo vòng lặp
-
+        
         info = self._info()
         if self.render_mode == "human":
             status = "success" if terminated else \
@@ -205,6 +224,7 @@ class NetworkRoutingEnv(gym.Env):
                 f"  demand={self._src}→{self._dst} "
                 f"({self._volume:.1f}Mbps) | "
                 f"path={self._path} | delay={self._total_delay:.2f}ms | "
+                f"loops={self._loop_count} | "
                 f"dropped_data={self._total_dropped_data:.2f}"
             )
 
@@ -216,7 +236,7 @@ class NetworkRoutingEnv(gym.Env):
     # ------------------------------------------------------------------ #
 
     def flat_obs(self) -> np.ndarray:
-        """Flat vector (158,) — input cho DQN network."""
+        """Flat vector (180,) — input cho DQN network."""
         return obs_to_flat(self._obs())
 
     def _path_avg_metrics(self) -> Tuple[float, float, float, float]:
@@ -241,6 +261,7 @@ class NetworkRoutingEnv(gym.Env):
         return {
             "current_node": self._current_node,
             "dst_node":     self._dst,
+            "visited_mask": self._visited_mask.copy(),
             "link_states":  self.topo.link_state_vector(),
         }
 
@@ -288,5 +309,6 @@ class NetworkRoutingEnv(gym.Env):
         print(
             f"  [{self._src}→{self._dst}] "
             f"cur={self._path[-2] if len(self._path) > 1 else self._src}"
-            f"→{action} | r={reward:+.3f} | drop={self._total_dropped_data:.1f} | {status}"
+            f"→{action} | r={reward:+.3f} | "
+            f"loops={self._loop_count} | drop={self._total_dropped_data:.1f} | {status}"
         )

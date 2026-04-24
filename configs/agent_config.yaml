@@ -8,8 +8,8 @@ q_learning:
  
 # Cấu hình cho DQN
 dqn:
-  input_dim: 158           # 2 + 26 edges × 6 features
-  hidden_dims: [128, 128]
+  input_dim: 180           # 8 one-hot cur + 8 one-hot dst + 8 visited + 26×6 links
+  hidden_dims: [128, 128]  # tăng từ [128,128] để xử lý input 180 chiều
   lr: 0.001
   gamma: 0.99
   epsilon: 1.0
