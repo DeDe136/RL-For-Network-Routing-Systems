@@ -67,7 +67,7 @@ def compute_final_reward(
 
     # ── Phạt hops và delay ───────────────────────────────────────────
     reward -= min(1.0, hops / 7.0)          * 0.08
-    reward -= min(1.0, total_delay / 50.0)  * 0.22
+    reward -= min(1.0, total_delay / 20.0)  * 0.22
 
     # ── Phạt dropped_data — ưu tiên cao nhất ─────────────────────────
     # Phạt liên tục theo lượng data bị drop, không cắt episode đột ngột.
