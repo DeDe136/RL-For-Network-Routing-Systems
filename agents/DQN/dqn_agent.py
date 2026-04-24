@@ -320,16 +320,20 @@ class DQNAgent(BaseAgent):
         mask = self.neighbor_mask[current_node]
         return np.where(mask > 0, q_vals, -np.inf)
 
-    def _build_mask_batch(self,
-                          next_states_t: torch.Tensor) -> torch.Tensor:
+    def _build_mask_batch(self, next_states_t: torch.Tensor) -> torch.Tensor:
         """
         Xây mask (B, 8) bool cho cả batch.
-        Decode current_node từ next_states[:, 0] × (NUM_NODES-1).
+
+        Decode current_node từ one-hot tại next_states[:, 0:8].
+        (Layout mới: [0:8]=one-hot cur, [8:16]=one-hot dst, [16:24]=visited)
         """
         B    = next_states_t.shape[0]
-        mask = torch.zeros(B, NUM_NODES, dtype=torch.bool,
-                           device=self.device)
-        nodes = (next_states_t[:, 0] * (NUM_NODES - 1)).round().long()
+        mask = torch.zeros(B, NUM_NODES, dtype=torch.bool, device=self.device)
+
+        # Lấy one-hot current_node từ 8 chiều đầu → argmax = node index
+        one_hot_cur = next_states_t[:, :NUM_NODES]          # (B, 8)
+        nodes       = one_hot_cur.argmax(dim=1).long()       # (B,)
+
         for i in range(B):
             valid = np.where(
                 self.neighbor_mask[int(nodes[i].item())] > 0
@@ -379,6 +383,14 @@ class DQNAgent(BaseAgent):
              queue_used_cur, load, queue_used theo MDP spec.
           4. Gọi topo.reduce_load(path) — chuyển load sang link tiếp theo
              và decay link ngoài path (leaky bucket).
+        
+        Khác với phiên bản cũ: KHÔNG dùng visited set để filter action.
+        Agent đã được train với visited_mask trong obs và phạt loop trong
+        reward — nó tự học tránh loop. Chỉ giữ max_hops guard để chống
+        vòng lặp vô hạn trong trường hợp model chưa hoàn hảo.
+
+        Visited_mask được truyền vào obs ở mỗi bước để model có thể
+        đọc lịch sử đường đi, giống hệt môi trường training.
 
         Link_states phản ánh trạng thái mạng thực sau mỗi hop, agent
         phải đọc chúng thay vì chỉ nhớ (src, dst).
@@ -400,6 +412,10 @@ class DQNAgent(BaseAgent):
         cur     = src
         hops    = 0
 
+        # Khởi tạo visited_mask như trong env
+        visited_mask = np.zeros(NUM_NODES, dtype=np.float32)
+        visited_mask[src] = 1.0
+
         for _ in range(max_hops):
             if cur == dst:
                 break
@@ -408,12 +424,11 @@ class DQNAgent(BaseAgent):
             obs = {
                 "current_node": cur,
                 "dst_node":     dst,
+                "visited_mask": visited_mask.copy(),
                 "link_states":  topo.link_state_vector(),
             }
-            valid = [a for a in
-                     np.where(self.neighbor_mask[cur] > 0)[0]
-                     if a not in visited]
-            valid = np.array(valid)
+
+            valid     = np.where(self.neighbor_mask[cur] > 0)[0]
             if len(valid) == 0:
                 break
 
@@ -423,7 +438,7 @@ class DQNAgent(BaseAgent):
             nxt       = int(np.random.choice(best_actions))
 
             path.append(nxt)
-            visited.add(nxt)
+            visited_mask[nxt] = 1.0   # cập nhật mask sau mỗi bước
             hops += 1
 
             # send_traffic theo MDP model:
