@@ -9,14 +9,14 @@ q_learning:
 # Cấu hình cho DQN
 dqn:
   input_dim: 180           # 8 one-hot cur + 8 one-hot dst + 8 visited + 26×6 links
-  hidden_dims: [128, 128]  # tăng từ [128,128] để xử lý input 180 chiều
+  hidden_dims: [256, 256]  # tăng từ [128,128] để xử lý input 180 chiều
   lr: 0.001
   gamma: 0.99
   epsilon: 1.0
   eps_min: 0.05
-  eps_decay: 0.99996879
+  eps_decay: 0.99998
   batch_size: 64
-  buffer_capacity: 20000
+  buffer_capacity: 50000
   target_update_freq: 100
   learn_start: 500          # bắt đầu học khi buffer có đủ 1 batch
 
@@ -28,7 +28,7 @@ dqn:
   # ── PER hyperparameters ──
   per_alpha:        0.6      # mức ưu tiên [0=uniform, 1=full PER]
   per_beta_start:   0.4      # IS weight ban đầu (tăng dần → 1.0)
-  per_beta_frames:  120000   # số steps để β đạt 1.0
+  per_beta_frames:  180000   # số steps để β đạt 1.0
   per_eps:          0.000001 # epsilon nhỏ tránh priority = 0
 
 # Cấu hình huấn luyện chung

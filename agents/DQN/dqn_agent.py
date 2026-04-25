@@ -79,7 +79,7 @@ class DQNAgent(BaseAgent):
         super().__init__(n_states, n_actions, config)
  
         # ── Hyperparameters cơ bản ────────────────────────────────────
-        self.input_dim          = config.get("input_dim",          158)
+        self.input_dim          = config.get("input_dim",          180)
         self.hidden_dims        = config.get("hidden_dims",        [128, 128])
         self.lr                 = config.get("lr",                 1e-3)
         self.gamma              = config.get("gamma",              0.99)
@@ -411,6 +411,7 @@ class DQNAgent(BaseAgent):
         visited = {src}
         cur     = src
         hops    = 0
+        accum   = {"load": {}, "queue_used_cur": {}}
 
         # Khởi tạo visited_mask như trong env
         visited_mask = np.zeros(NUM_NODES, dtype=np.float32)
@@ -444,19 +445,39 @@ class DQNAgent(BaseAgent):
             # send_traffic theo MDP model:
             # is_first_hop=True chỉ ở hop đầu tiên (cộng volume vào queue)
             is_first_hop = (hops == 1)
-            topo.send_traffic(
+            result = topo.send_traffic(
                 path        = path,
                 volume_mbps = volume_mbps,
                 is_first_hop= is_first_hop,
             )
 
+            # Tích lũy load & queue_used_cur của link cuối sau send_traffic
+            last = (path[-2], path[-1])
+            accum["load"][last] = (
+                accum["load"].get(last, 0.0) + result["load"]
+            )
+            accum["queue_used_cur"][last] = (
+                accum["queue_used_cur"].get(last, 0.0) + result["queue_used_cur"]
+            )
+
             # reduce_load: leaky bucket trên path + decay ngoài path
             topo.reduce_load(path)
+
+            # Tích lũy toàn path sau reduce_load
+            for _i in range(len(path) - 1):
+                _lk = (path[_i], path[_i + 1])
+                _attr = topo.link(_lk[0], _lk[1])
+                accum["load"][_lk] = (
+                    accum["load"].get(_lk, 0.0) + _attr.load
+                )
+                accum["queue_used_cur"][_lk] = (
+                    accum["queue_used_cur"].get(_lk, 0.0) + _attr.queue_used_cur
+                )
 
             cur = nxt
 
         self.training = was_training
-        return path
+        return path, accum
 
     # ------------------------------------------------------------------ #
     #  Save / Load                                                         #

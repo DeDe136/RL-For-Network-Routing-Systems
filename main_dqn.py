@@ -161,8 +161,12 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
 
     # ── Helpers ──────────────────────────────────────────────────────
 
-    def collect_link_details(path, topo_ref):
-        """Đọc trạng thái link hiện tại trên path."""
+    def collect_link_details(path, topo_ref, accum):
+        """
+        Đọc trạng thái link trên path.
+        load & queue_used_cur lấy từ accum (tích lũy qua send_traffic +
+        reduce_load), các field còn lại lấy trực tiếp từ topo_ref.
+        """
         details = []
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
@@ -172,11 +176,11 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
                 "dst_node":       v,
                 "delay":          lk.delay,
                 "bandwidth":      lk.bandwidth,
-                "load":           lk.load,
-                "utilization":    lk.utilization,
+                "load":           accum["load"].get((u, v), lk.load),
+                "utilization":    accum["load"].get((u, v), lk.load) / lk.bandwidth,
                 "queue_size_cur": lk.queue_size_cur,
-                "queue_used_cur": lk.queue_used_cur,
-                "queue_util":     lk.queue_util,
+                "queue_used_cur": accum["queue_used_cur"].get((u, v), lk.queue_used_cur),
+                "queue_util":     accum["queue_used_cur"].get((u, v), lk.queue_used_cur) / lk.queue_size_cur,
                 "dropped_data":   lk.dropped_data,
             })
         return details
@@ -203,15 +207,42 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         }
 
     def ospf_path_with_traffic(src_n, dst_n, topo_ref, vol):
-        """Dijkstra + send_traffic + reduce_load từng hop."""
+        """
+        Dijkstra + send_traffic + reduce_load từng hop.
+        Trả về (path, accum) trong đó accum tích lũy load và
+        queue_used_cur trên từng link sau mỗi send_traffic + reduce_load.
+        """
         full_path = topo_ref.shortest_path(src_n, dst_n)
+        accum = {"load": {}, "queue_used_cur": {}}
         if len(full_path) < 2:
-            return full_path
+            return full_path, accum
+
         for hop_idx in range(1, len(full_path)):
             partial = full_path[:hop_idx + 1]
-            topo_ref.send_traffic(partial, vol, is_first_hop=(hop_idx == 1))
+
+            # send_traffic — chỉ tác động link cuối (partial[-2] → partial[-1])
+            result = topo_ref.send_traffic(partial, vol, is_first_hop=(hop_idx == 1))
+            last = (partial[-2], partial[-1])
+            accum["load"][last] = (
+                accum["load"].get(last, 0.0) + result["load"]
+            )
+            accum["queue_used_cur"][last] = (
+                accum["queue_used_cur"].get(last, 0.0) + result["queue_used_cur"]
+            )
+
+            # reduce_load — tác động toàn bộ partial, đọc lại topo sau khi xong
             topo_ref.reduce_load(partial)
-        return full_path
+            for i in range(len(partial) - 1):
+                lk = (partial[i], partial[i + 1])
+                attr = topo_ref.link(lk[0], lk[1])
+                accum["load"][lk] = (
+                    accum["load"].get(lk, 0.0) + attr.load
+                )
+                accum["queue_used_cur"][lk] = (
+                    accum["queue_used_cur"].get(lk, 0.0) + attr.queue_used_cur
+                )
+
+        return full_path, accum
 
     # ── Seed con cho mỗi bộ (đảm bảo DQN và OSPF bắt đầu giống nhau) ─
     pair_seeds = [DEMO_SEED + 100 + i for i in range(n_pairs)]
@@ -234,8 +265,8 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         topo_dqn._rng = np.random.default_rng(seed)
         topo_dqn.step_background(intensity=0.3)
 
-        dqn_path    = agent.best_path(src_n, dst_n, topo_dqn, volume_mbps=vol)
-        dqn_details = collect_link_details(dqn_path, topo_dqn)
+        dqn_path, dqn_accum = agent.best_path(src_n, dst_n, topo_dqn, volume_mbps=vol)
+        dqn_details = collect_link_details(dqn_path, topo_dqn, dqn_accum)
         dqn_info    = make_info(src_n, dst_n, dqn_path, dqn_details, topo_dqn)
 
         ep_logger.log_episode("DQN", ep_idx, dqn_info, reward=None)
@@ -264,8 +295,8 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         topo_ospf._rng = np.random.default_rng(seed)
         topo_ospf.step_background(intensity=0.3)
 
-        sp_path    = ospf_path_with_traffic(src_n, dst_n, topo_ospf, vol)
-        sp_details = collect_link_details(sp_path, topo_ospf)
+        sp_path, sp_accum = ospf_path_with_traffic(src_n, dst_n, topo_ospf, vol)
+        sp_details = collect_link_details(sp_path, topo_ospf, sp_accum)
         sp_info    = make_info(src_n, dst_n, sp_path, sp_details, topo_ospf)
 
         ep_logger.log_episode("OSPF", ep_idx, sp_info, reward=None)

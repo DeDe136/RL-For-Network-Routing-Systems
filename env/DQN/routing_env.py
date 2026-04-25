@@ -44,7 +44,7 @@ from network.DQN.topology import NetworkTopology
 from network.DQN.traffic_generator import TrafficGenerator
 from network.DQN.metrics import NetworkMetrics
 from env.DQN.spaces import make_observation_space, make_action_space, NUM_NODES, obs_to_flat
-from env.DQN.reward import compute_final_reward, compute_shaping_reward
+from env.DQN.reward import compute_final_reward, compute_shaping_reward, compute_traffic_penalty
 
 
 class NetworkRoutingEnv(gym.Env):
@@ -83,6 +83,11 @@ class NetworkRoutingEnv(gym.Env):
         self._visited_mask:      np.ndarray = np.zeros(NUM_NODES, dtype=np.float32)
         self._loop_count:        int   = 0   # số lần đi vào node đã thăm
 
+        # Accumulator per-link cho info — tích lũy load và queue_used_cur
+        # sau mỗi send_traffic + reduce_load, KHÔNG ảnh hưởng reward.
+        self._accum_load:           Dict[Tuple[int,int], float] = {}
+        self._accum_queue_used_cur: Dict[Tuple[int,int], float] = {}
+
     # ------------------------------------------------------------------ #
     #  Gymnasium API                                                       #
     # ------------------------------------------------------------------ #
@@ -109,6 +114,8 @@ class NetworkRoutingEnv(gym.Env):
         self._total_delay        = 0.0
         self._total_dropped_data = 0.0
         self._loop_count         = 0
+        self._accum_load           = {}
+        self._accum_queue_used_cur = {}
 
         self._visited_mask = np.zeros(NUM_NODES, dtype=np.float32)
         self._visited_mask[self._src] = 1.0
@@ -160,10 +167,43 @@ class NetworkRoutingEnv(gym.Env):
         self._total_delay        += result["total_delay"]
         self._total_dropped_data += result["dropped_data"]
 
+        # ── Phạt nhẹ load & queue_used_cur ngay sau send_traffic ─────
+        # Lấy thông số vật lý của link cuối để normalize
+        _last_attr = self.topo.link(self._path[-2], self._path[-1])
+        _traffic_penalty = compute_traffic_penalty(
+            load           = result["load"],
+            queue_used_cur = result["queue_used_cur"],
+            bandwidth      = _last_attr.bandwidth,
+            queue_size_cur = _last_attr.queue_size_cur,
+        )
+
+        # ── Tích lũy load & queue_used_cur của link cuối sau send_traffic ─
+        _last_link = (self._path[-2], self._path[-1])
+        self._accum_load[_last_link] = (
+            self._accum_load.get(_last_link, 0.0) + result["load"]
+        )
+        self._accum_queue_used_cur[_last_link] = (
+            self._accum_queue_used_cur.get(_last_link, 0.0)
+            + result["queue_used_cur"]
+        )
+
         # ── reduce_load (leaky bucket) ────────────────────────────────
         # Cũng có thể gây thêm drop khi forward load → trả về float
         drop_from_reduce          = self.topo.reduce_load(self._path)
         self._total_dropped_data += drop_from_reduce
+
+        # ── Tích lũy load & queue_used_cur toàn path sau reduce_load ──
+        # Reward đã tính xong — đọc topo ở đây không ảnh hưởng reward.
+        for _i in range(len(self._path) - 1):
+            _lk = (self._path[_i], self._path[_i + 1])
+            _attr = self.topo.link(_lk[0], _lk[1])
+            self._accum_load[_lk] = (
+                self._accum_load.get(_lk, 0.0) + _attr.load
+            )
+            self._accum_queue_used_cur[_lk] = (
+                self._accum_queue_used_cur.get(_lk, 0.0)
+                + _attr.queue_used_cur
+            )
 
         # ── Metrics sau cập nhật ─────────────────────────────────────
         avg_util, avg_queue, avg_bw, avg_qsize = self._path_avg_metrics()
@@ -181,7 +221,7 @@ class NetworkRoutingEnv(gym.Env):
                 avg_queue_size     = avg_qsize,
                 total_dropped_data = self._total_dropped_data,
                 loop_count         = self._loop_count,
-            )
+            ) + _traffic_penalty
 
         elif self._hops >= self.max_hops - 1:
             truncated = True
@@ -195,7 +235,7 @@ class NetworkRoutingEnv(gym.Env):
                 avg_queue_size     = avg_qsize,
                 total_dropped_data = self._total_dropped_data,
                 loop_count         = self._loop_count,
-            )
+            ) + _traffic_penalty
 
         else:
             # Shaping reward: dùng trạng thái link vừa đi qua
@@ -207,7 +247,7 @@ class NetworkRoutingEnv(gym.Env):
                 current_link_queue_size  = link.queue_size_cur,
                 current_link_dropped     = link.dropped_data,
                 is_loop                  = is_loop,
-            )
+            ) + _traffic_penalty
         
         info = self._info()
         if self.render_mode == "human":
@@ -293,11 +333,15 @@ class NetworkRoutingEnv(gym.Env):
                     "dst_node":       v,
                     "delay":          lk.delay,
                     "bandwidth":      lk.bandwidth,
-                    "load":           lk.load,
-                    "utilization":    lk.utilization,
+                    # load & queue_used_cur: tổng tích lũy qua send_traffic
+                    # + reduce_load trong episode, không phải giá trị tức thời
+                    "load":           self._accum_load.get((u, v), lk.load),
+                    "utilization":    self._accum_load.get((u, v), lk.load) / lk.bandwidth,
                     "queue_size_cur": lk.queue_size_cur,
-                    "queue_used_cur": lk.queue_used_cur,
-                    "queue_util":     lk.queue_util,
+                    "queue_used_cur": self._accum_queue_used_cur.get(
+                                           (u, v), lk.queue_used_cur),
+                    "queue_util":     self._accum_queue_used_cur.get(
+                                           (u, v), lk.queue_used_cur) / lk.queue_size_cur,
                     "dropped_data":   lk.dropped_data,
                 })
             info["link_details"] = link_details

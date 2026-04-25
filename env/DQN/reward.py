@@ -48,6 +48,10 @@ BANDWIDTH_MAX      = 200.0   # Mbps
 QUEUE_SIZE_MAX     = 100.0   # packets
 DROP_PENALTY_SCALE = 100.0    # packets — 100 packets drop → phạt tối đa
 
+# Traffic penalty (sau send_traffic) — phạt nhẹ load và queue_used_cur raw
+LOAD_PENALTY_W       = 0.04   # trọng số phạt load / bandwidth
+QUEUE_USED_PENALTY_W = 0.03   # trọng số phạt queue_used_cur / queue_size_cur
+
 # Loop penalty
 MAX_LOOPS            = 4       # số lần loop tối đa để normalize (≥ MAX_LOOPS → phạt max)
 LOOP_PENALTY_MAX     = 0.40    # phạt tối đa cho loop trong final reward
@@ -147,3 +151,31 @@ def compute_shaping_reward(
         shaping += min(1.0, current_link_queue_size / QUEUE_SIZE_MAX) * 0.02
 
     return float(shaping)
+
+def compute_traffic_penalty(
+    load:           float,
+    queue_used_cur: float,
+    bandwidth:      float,
+    queue_size_cur: float,
+) -> float:
+    """
+    Phạt nhẹ dựa trên load và queue_used_cur raw trả về từ send_traffic.
+
+    Gọi ngay sau send_traffic trong step() ở mọi hop (kể cả intermediate
+    lẫn terminal) trước khi cộng vào shaping / final reward, để agent nhận
+    tín hiệu tức thời về mức độ tải link vừa đi qua.
+
+    Normalize:
+      load_ratio       = load / bandwidth          ∈ [0, 1]
+      queue_used_ratio = queue_used_cur / queue_size_cur  ∈ [0, 1]
+
+    Penalty = -(load_ratio × LOAD_PENALTY_W + queue_used_ratio × QUEUE_USED_PENALTY_W)
+            ∈ [-0.07, 0.0]
+
+    Trọng số nhỏ (~0.03 mỗi thành phần) để không lấn át shaping reward
+    hiện có, chỉ đủ để phân biệt link nhàn rỗi vs link đang tải nặng.
+    """
+    load_ratio       = min(1.0, load / bandwidth)          if bandwidth      > 0 else 0.0
+    queue_used_ratio = min(1.0, queue_used_cur / queue_size_cur) if queue_size_cur > 0 else 0.0
+
+    return -(load_ratio * LOAD_PENALTY_W + queue_used_ratio * QUEUE_USED_PENALTY_W)

@@ -256,9 +256,11 @@ class NetworkTopology:
             attr.queue_used_cur = 0.0
 
         return {
-            "total_delay":  attr.delay,
-            "dropped_data": hop_dropped,
-            "hops":         1,
+            "total_delay":    attr.delay,
+            "dropped_data":   hop_dropped,
+            "hops":           1,
+            "load":           attr.load,
+            "queue_used_cur": attr.queue_size_cur,
         }
 
     # ------------------------------------------------------------------ #
