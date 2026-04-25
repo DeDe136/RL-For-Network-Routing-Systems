@@ -290,10 +290,10 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         return float(np.mean([r[key] for r in results]))
 
     metrics = [
-        ("Avg delay (ms)",        "total_delay"),
-        ("Avg utilization",       "avg_utilization"),
-        ("Avg queue_util",        "avg_queue_util"),
-        ("Avg dropped_data (pkt)","total_dropped_data"),
+        ("Avg delay (ms)",            "total_delay"),
+        ("Avg utilization",           "avg_utilization"),
+        ("Avg queue_used_cur (pkts)", "avg_queue_used_cur"),
+        ("Avg dropped_data (pkt)",    "total_dropped_data"),
     ]
     print(f"  {'Metric':<28} {'DQN':>12}  {'OSPF':>12}")
     print(f"  {'─'*56}")
@@ -307,169 +307,282 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
     # ── Biểu đồ ──────────────────────────────────────────────────────
     try:
         import matplotlib.pyplot as plt
+        import matplotlib.ticker as mticker
+        from matplotlib.gridspec import GridSpec
+        from matplotlib.patches import FancyBboxPatch
+        import matplotlib.patheffects as pe
 
-        pair_labels = [f"{s}→{d}" for s,d,_ in pairs]
-        x     = np.arange(n_pairs)
-        width = 0.35
+        # ── Bảng màu & style hiện đại ─────────────────────────────────
+        plt.rcParams.update({
+            "font.family":       "DejaVu Sans",
+            "axes.spines.top":   False,
+            "axes.spines.right": False,
+        })
+
+        BG_DARK   = "#0F1117"
+        BG_PANEL  = "#1A1D2E"
+        BG_AXES   = "#12152A"
+        COLOR_DQN  = "#00D4FF"   # cyan neon
+        COLOR_OSPF = "#FF6B35"   # orange neon
+        COLOR_GRID = "#2A2D45"
+        COLOR_TEXT = "#E8EAF6"
+        COLOR_SUB  = "#8B8FA8"
+
+        MARKER_DQN  = "o"
+        MARKER_OSPF = "s"
+        MARKER_SIZE = 8
 
         def vals(results, key):
             return [r[key] for r in results]
 
-        color_dqn  = "#2E86AB"
-        color_ospf = "#F18F01"
+        pair_labels = [f"{s}→{d}" for s, d, _ in pairs]
+        x = np.arange(n_pairs)
 
-        # ── Helper vẽ từng biểu đồ riêng biệt ───────────────────────
-        def create_bar_chart(dqn_vals, ospf_vals, title, ylabel, suffix):
-            fig, ax = plt.subplots(figsize=(11, 7))
-            b1 = ax.bar(x - width/2, dqn_vals,  width, label="DQN",  color=color_dqn)
-            b2 = ax.bar(x + width/2, ospf_vals, width, label="OSPF", color=color_ospf)
-
-            ax.set_title(title, fontsize=12, fontweight="bold")
-            ax.set_ylabel(ylabel, fontsize=10)
+        # ── Hàm style chung cho axes ──────────────────────────────────
+        def style_ax(ax, title, ylabel):
+            ax.set_facecolor(BG_AXES)
+            ax.set_title(title, color=COLOR_TEXT, fontsize=12,
+                         fontweight="bold", pad=14)
+            ax.set_ylabel(ylabel, color=COLOR_SUB, fontsize=10)
+            ax.tick_params(colors=COLOR_SUB, labelsize=9)
             ax.set_xticks(x)
-            ax.set_xticklabels(pair_labels, rotation=30, ha="right")
-            ax.legend(fontsize=9)
-            ax.grid(axis="y", linestyle="--", alpha=0.4)
+            ax.set_xticklabels(pair_labels, rotation=35, ha="right",
+                               color=COLOR_SUB, fontsize=8.5)
+            ax.grid(axis="y", color=COLOR_GRID, linestyle="--",
+                    linewidth=0.8, alpha=0.8)
+            ax.grid(axis="x", color=COLOR_GRID, linestyle=":",
+                    linewidth=0.5, alpha=0.5)
+            for spine in ax.spines.values():
+                spine.set_visible(False)
 
-            for rect in list(b1) + list(b2):
-                h = rect.get_height()
-                if h > 0:
-                    ax.annotate(f"{h:.2f}",
-                                xy=(rect.get_x()+rect.get_width()/2, h),
-                                xytext=(0,2), textcoords="offset points",
-                                ha="center", va="bottom", fontsize=7)
+        def add_legend(ax):
+            leg = ax.legend(
+                fontsize=9, framealpha=0.2,
+                facecolor=BG_PANEL, edgecolor=COLOR_GRID,
+                labelcolor=COLOR_TEXT,
+            )
 
-            fig.suptitle(f"DQN vs OSPF — {n_pairs} bộ ngẫu nhiên (seed={DEMO_SEED})",
-                         fontsize=13, fontweight="bold", y=0.98)
+        def annotate_line(ax, x_vals, y_vals, color, fmt=".2f"):
+            """Chú thích giá trị tại mỗi điểm trên đường."""
+            for xi, yi in zip(x_vals, y_vals):
+                ax.annotate(
+                    f"{yi:{fmt}}",
+                    xy=(xi, yi),
+                    xytext=(0, 10), textcoords="offset points",
+                    ha="center", va="bottom",
+                    fontsize=7.5, color=color, fontweight="bold",
+                    path_effects=[pe.withStroke(linewidth=2,
+                                                foreground=BG_AXES)],
+                )
 
-            chart_path = os.path.join(log_dir, f"demo_comparison_{suffix}.png")
-            plt.savefig(chart_path, dpi=150, bbox_inches="tight")
+        def save_fig(fig, suffix):
+            chart_path = os.path.join(log_dir,
+                                      f"demo_comparison_{suffix}.png")
+            plt.savefig(chart_path, dpi=150, bbox_inches="tight",
+                        facecolor=BG_DARK)
             print(f"  Chart saved: {chart_path}")
-            plt.close(fig)   # Đóng figure để không chiếm bộ nhớ
+            plt.close(fig)
+
+        # ── Helper tạo line chart hiện đại ───────────────────────────
+        def create_line_chart(dqn_v, ospf_v, title, ylabel, suffix):
+            fig, ax = plt.subplots(figsize=(12, 6),
+                                   facecolor=BG_DARK)
+            ax.set_facecolor(BG_AXES)
+
+            # Vùng fill giữa hai đường
+            ax.fill_between(x, dqn_v, ospf_v,
+                            alpha=0.08, color=COLOR_DQN)
+
+            # Đường DQN
+            ax.plot(x, dqn_v, color=COLOR_DQN, linewidth=2.5,
+                    marker=MARKER_DQN, markersize=MARKER_SIZE,
+                    label="DQN",
+                    markerfacecolor=BG_DARK,
+                    markeredgewidth=2,
+                    zorder=5)
+
+            # Đường OSPF
+            ax.plot(x, ospf_v, color=COLOR_OSPF, linewidth=2.5,
+                    marker=MARKER_OSPF, markersize=MARKER_SIZE,
+                    label="OSPF",
+                    markerfacecolor=BG_DARK,
+                    markeredgewidth=2,
+                    linestyle="--",
+                    zorder=5)
+
+            # Highlight điểm DQN tốt hơn / tệ hơn
+            for xi, (dv, ov) in enumerate(zip(dqn_v, ospf_v)):
+                clr = "#00FF9C" if dv <= ov else "#FF4C6E"
+                ax.scatter([xi], [dv], color=clr, s=60,
+                           zorder=6, edgecolors=BG_DARK, linewidth=1.5)
+
+            annotate_line(ax, x, dqn_v,  COLOR_DQN)
+            annotate_line(ax, x, ospf_v, COLOR_OSPF)
+
+            style_ax(ax, title, ylabel)
+            add_legend(ax)
+
+            fig.suptitle(
+                f"DQN vs OSPF — {n_pairs} bộ ngẫu nhiên  (seed={DEMO_SEED})",
+                color=COLOR_TEXT, fontsize=13, fontweight="bold", y=1.01,
+            )
+            fig.tight_layout()
+            save_fig(fig, suffix)
 
         # ═══════════════════════════════════════════════════════════════
-        #  5 BIỂU ĐỒ RIÊNG BIỆT
+        #  BIỂU ĐỒ 1 — Delay  (line)
         # ═══════════════════════════════════════════════════════════════
-
-        # Biểu đồ 1: Delay
-        create_bar_chart(
+        create_line_chart(
             vals(dqn_results,  "total_delay"),
             vals(ospf_results, "total_delay"),
-            "1. So sánh delay trung bình từng bộ",
+            "① Delay từng bộ (thấp hơn = tốt hơn)",
             "Delay (ms)",
-            "1_delay"
+            "1_delay",
         )
 
-        # Biểu đồ 2: Avg load
-        create_bar_chart(
+        # ═══════════════════════════════════════════════════════════════
+        #  BIỂU ĐỒ 2 — Avg load  (line)
+        # ═══════════════════════════════════════════════════════════════
+        create_line_chart(
             vals(dqn_results,  "avg_load"),
             vals(ospf_results, "avg_load"),
-            "2. So sánh băng thông sử dụng TB từng bộ",
+            "② Băng thông sử dụng TB từng bộ",
             "Avg load (Mbps)",
-            "2_load"
+            "2_load",
         )
 
-        # Biểu đồ 3: Avg queue_util
-        create_bar_chart(
+        # ═══════════════════════════════════════════════════════════════
+        #  BIỂU ĐỒ 3 — Avg queue_used_cur  (line)
+        # ═══════════════════════════════════════════════════════════════
+        create_line_chart(
             vals(dqn_results,  "avg_queue_used_cur"),
             vals(ospf_results, "avg_queue_used_cur"),
-            "3. So sánh packets đang được sử dụng TB trên hàng đợi từng bộ",
+            "③ Packets đang dùng TB trong hàng đợi từng bộ (thấp hơn = tốt hơn)",
             "Avg queue_used_cur (packets)",
-            "3_queue"
+            "3_queue",
         )
 
-        # Biểu đồ 4: Total dropped_data
-        create_bar_chart(
+        # ═══════════════════════════════════════════════════════════════
+        #  BIỂU ĐỒ 4 — Total dropped_data  (line)
+        # ═══════════════════════════════════════════════════════════════
+        create_line_chart(
             vals(dqn_results,  "total_dropped_data"),
             vals(ospf_results, "total_dropped_data"),
-            "4. So sánh packets bị drop từng bộ",
+            "④ Packets bị drop từng bộ (thấp hơn = tốt hơn)",
             "Dropped data (packets)",
-            "4_dropped"
+            "4_dropped",
         )
 
-        # Biểu đồ 5: Tổng hợp tất cả bộ (summary)
-        fig, (ax5, ax6) = plt.subplots(2, 1, figsize=(11, 10))
-
+        # ═══════════════════════════════════════════════════════════════
+        #  BIỂU ĐỒ 5 — Summary: giá trị TB + % cải thiện  (bar + diverging)
+        # ═══════════════════════════════════════════════════════════════
         metrics_summary = [
-            ("Delay TB (ms)",        "total_delay"),
-            ("Load TB (Mbps)",       "avg_load"),
-            ("Queue util TB",        "avg_queue_util"),
-            ("Dropped TB (pkts)",    "total_dropped_data"),
+            ("Delay TB\n(ms)",          "total_delay"),
+            ("Load TB\n(Mbps)",         "avg_load"),
+            ("Queue used TB\n(pkts)",   "avg_queue_used_cur"),
+            ("Dropped TB\n(pkts)",      "total_dropped_data"),
         ]
 
         m_labels = [m[0] for m in metrics_summary]
         dqn_agg  = [gmean(dqn_results,  m[1]) for m in metrics_summary]
         ospf_agg = [gmean(ospf_results, m[1]) for m in metrics_summary]
 
-        xm = np.arange(len(m_labels))
-        width = 0.35
-
-        # ─────────────────────────────────────────
-        #  Biểu đồ trên: giá trị tuyệt đối
-        # ─────────────────────────────────────────
-        b1 = ax5.bar(xm - width/2, dqn_agg,  width, label="DQN",  color=color_dqn)
-        b2 = ax5.bar(xm + width/2, ospf_agg, width, label="OSPF", color=color_ospf)
-
-        ax5.set_title("5A. So sánh giá trị trung bình", fontsize=12, fontweight="bold")
-        ax5.set_xticks(xm)
-        ax5.set_xticklabels(m_labels, fontsize=9)
-        ax5.legend()
-        ax5.grid(axis="y", linestyle="--", alpha=0.4)
-
-        # annotate giá trị
-        for rect in list(b1) + list(b2):
-            h = rect.get_height()
-            if h > 0:
-                ax5.annotate(f"{h:.3f}",
-                            xy=(rect.get_x()+rect.get_width()/2, h),
-                            xytext=(0,2), textcoords="offset points",
-                            ha="center", va="bottom", fontsize=8)
-
-        # ─────────────────────────────────────────
-        #  Biểu đồ dưới: % improvement
-        # ─────────────────────────────────────────
-        def improvement(dqn_vals, ospf_vals):
+        def improvement(dqn_v, ospf_v):
             res = []
-            for d, o in zip(dqn_vals, ospf_vals):
+            for d, o in zip(dqn_v, ospf_v):
                 if o == 0:
-                    if d == 0:
-                        res.append(0.0)          # cả hai đều tốt như nhau
-                    else:
-                        res.append(-100.0)       # DQN tệ hơn cực mạnh
+                    res.append(0.0 if d == 0 else -100.0)
                 else:
                     res.append((o - d) / o * 100.0)
             return res
 
         improve_vals = improvement(dqn_agg, ospf_agg)
 
-        colors = ["green" if v >= 0 else "red" for v in improve_vals]
+        fig5 = plt.figure(figsize=(13, 10), facecolor=BG_DARK)
+        gs   = GridSpec(2, 1, figure=fig5, hspace=0.52,
+                        top=0.93, bottom=0.08, left=0.09, right=0.97)
 
-        bars = ax6.bar(xm, improve_vals, color=colors)
+        ax5a = fig5.add_subplot(gs[0])
+        ax5b = fig5.add_subplot(gs[1])
 
-        ax6.set_title("5B. % cải thiện của DQN so với OSPF",
-                    fontsize=12, fontweight="bold")
-        ax6.set_ylabel("Improvement (%)")
-        ax6.set_xticks(xm)
-        ax6.set_xticklabels(m_labels, fontsize=9)
-        ax6.grid(axis="y", linestyle="--", alpha=0.4)
+        # ── 5A: grouped bar với gradient feel ────────────────────────
+        xm    = np.arange(len(m_labels))
+        width = 0.32
+
+        bars_dqn  = ax5a.bar(xm - width/2, dqn_agg,  width,
+                             label="DQN",  color=COLOR_DQN,
+                             alpha=0.85, zorder=3,
+                             linewidth=0, edgecolor="none")
+        bars_ospf = ax5a.bar(xm + width/2, ospf_agg, width,
+                             label="OSPF", color=COLOR_OSPF,
+                             alpha=0.85, zorder=3,
+                             linewidth=0, edgecolor="none")
+
+        # annotate bar
+        for rect, color in (
+            [(r, COLOR_DQN)  for r in bars_dqn] +
+            [(r, COLOR_OSPF) for r in bars_ospf]
+        ):
+            h = rect.get_height()
+            if h > 0:
+                ax5a.annotate(
+                    f"{h:.2f}",
+                    xy=(rect.get_x() + rect.get_width() / 2, h),
+                    xytext=(0, 4), textcoords="offset points",
+                    ha="center", va="bottom",
+                    fontsize=8.5, fontweight="bold", color=color,
+                    path_effects=[pe.withStroke(linewidth=2,
+                                                foreground=BG_AXES)],
+                )
+
+        style_ax(ax5a, "⑤A  Giá trị trung bình tổng hợp (DQN vs OSPF)",
+                 "Giá trị TB")
+        ax5a.set_xticks(xm)
+        ax5a.set_xticklabels(m_labels, fontsize=9.5, color=COLOR_SUB,
+                             rotation=0)
+        ax5a.set_xlim(-0.6, len(m_labels) - 0.4)
+        add_legend(ax5a)
+
+        # ── 5B: diverging bar % cải thiện ────────────────────────────
+        ax5b.set_facecolor(BG_AXES)
+        ax5b.axhline(0, color=COLOR_TEXT, linewidth=1, alpha=0.5)
+
+        bar_colors = ["#00FF9C" if v >= 0 else "#FF4C6E"
+                      for v in improve_vals]
+        bars_imp = ax5b.bar(xm, improve_vals, width=0.45,
+                            color=bar_colors, alpha=0.88,
+                            zorder=3, linewidth=0)
 
         # annotate %
-        for rect, val in zip(bars, improve_vals):
-            ax6.annotate(f"{val:+.2f}%",
-                        xy=(rect.get_x()+rect.get_width()/2, rect.get_height()),
-                        xytext=(0,3), textcoords="offset points",
-                        ha="center", va="bottom", fontsize=9, fontweight="bold")
+        for rect, val in zip(bars_imp, improve_vals):
+            vert_offset = 4 if val >= 0 else -14
+            ax5b.annotate(
+                f"{val:+.2f}%",
+                xy=(rect.get_x() + rect.get_width() / 2, val),
+                xytext=(0, vert_offset), textcoords="offset points",
+                ha="center", va="bottom",
+                fontsize=9.5, fontweight="bold",
+                color="#00FF9C" if val >= 0 else "#FF4C6E",
+                path_effects=[pe.withStroke(linewidth=2,
+                                            foreground=BG_AXES)],
+            )
 
-        # ─────────────────────────────────────────
-        #  Title chung + save
-        # ─────────────────────────────────────────
-        fig.suptitle(f"DQN vs OSPF — Summary (value + improvement) (seed={DEMO_SEED})",
-                    fontsize=13, fontweight="bold", y=0.98)
+        style_ax(ax5b,
+                 "⑤B  % cải thiện của DQN so với OSPF  (dương = DQN tốt hơn)",
+                 "Improvement (%)")
+        ax5b.set_xticks(xm)
+        ax5b.set_xticklabels(m_labels, fontsize=9.5, color=COLOR_SUB,
+                             rotation=0)
+        ax5b.set_xlim(-0.6, len(m_labels) - 0.4)
+        ax5b.yaxis.set_major_formatter(mticker.FormatStrFormatter("%+.1f%%"))
+        for spine in ax5b.spines.values():
+            spine.set_visible(False)
 
-        chart_path5 = os.path.join(log_dir, "demo_comparison_5_summary.png")
-        plt.savefig(chart_path5, dpi=150, bbox_inches="tight")
-        print(f"  Chart saved: {chart_path5}")
-        plt.close(fig)
+        fig5.suptitle(
+            f"DQN vs OSPF — Summary  (seed={DEMO_SEED})",
+            color=COLOR_TEXT, fontsize=14, fontweight="bold",
+        )
+        save_fig(fig5, "5_summary")
 
         print("\n  ✓ Đã lưu 5 biểu đồ RIÊNG BIỆT vào thư mục logs/DQN/")
 
