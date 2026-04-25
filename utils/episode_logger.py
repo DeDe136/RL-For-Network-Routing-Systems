@@ -13,6 +13,8 @@ Mỗi hàng CSV là 1 episode với đầy đủ thông tin:
     total_delay_ms : tổng delay (ms)
     dropped        : 1 nếu bị drop, 0 nếu không
     reward         : reward tổng episode (để trống nếu không có — demo/OSPF)
+    loss           : average loss episode (ep_loss / avg_steps).
+                        None → để trống (OSPF/demo/eval).
     avg_utilization : utilization băng thông trung bình trên path
     avg_queue_util  : queue_util trung bình trên path
     total_dropped_data: tổng data bị drop trên cả đường đi
@@ -80,6 +82,7 @@ class EpisodeLogger:
             "total_delay_ms",
             "dropped",
             "reward",
+            "loss",
             "avg_utilization",
             "avg_queue_util",
             "total_dropped_data",
@@ -107,6 +110,7 @@ class EpisodeLogger:
         episode: int,
         info:    Dict[str, Any],
         reward:  Optional[float] = None,
+        loss:    Optional[float] = None,
     ):
         """
         Ghi một episode vào file CSV.
@@ -119,6 +123,8 @@ class EpisodeLogger:
                         src, dst, path, hops, total_delay, dropped,
                         avg_utilization, avg_queue_util, link_details.
             reward  : tổng reward episode. None → để trống (OSPF/demo).
+            loss    : average loss episode (ep_loss / avg_steps).
+                      None → để trống (OSPF/demo/eval).
         """
         if self._writer is None:
             self._init_writer()
@@ -137,6 +143,7 @@ class EpisodeLogger:
             "total_delay_ms":  f"{info.get('total_delay', 0.0):.4f}",
             "dropped":         int(info.get("dropped", False)),
             "reward":          f"{reward:.4f}" if reward is not None else "",
+            "loss":            f"{loss:.6f}"   if loss   is not None else "",
             "avg_utilization":     f"{info.get('avg_utilization', 0.0):.4f}",
             "avg_queue_util":      f"{info.get('avg_queue_util', 0.0):.4f}",
             "total_dropped_data":  f"{info.get('total_dropped_data', 0.0):.4f}",

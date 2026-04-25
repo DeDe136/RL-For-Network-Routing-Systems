@@ -320,7 +320,7 @@ class NetworkRoutingEnv(gym.Env):
             "total_dropped_data":self._total_dropped_data,
             # backward-compat: dropped=True nếu có bất kỳ data bị drop
             "dropped":           self._total_dropped_data > 0,
-            # **self.topo.summary(),
+            **self.topo.summary(),
         }
         # Per-link details
         if len(self._path) >= 2:

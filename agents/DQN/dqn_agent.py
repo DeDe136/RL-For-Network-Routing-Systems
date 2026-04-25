@@ -87,7 +87,7 @@ class DQNAgent(BaseAgent):
         self.eps_min            = config.get("eps_min",            0.01)
         self.eps_decay          = config.get("eps_decay",          0.9995)
         self.batch_size         = config.get("batch_size",         64)
-        self.buffer_capacity    = config.get("buffer_capacity",    10_000)
+        self.buffer_capacity    = config.get("buffer_capacity",    50_000)
         self.target_update_freq = config.get("target_update_freq", 100)
         self.learn_start        = config.get("learn_start",        self.batch_size)
         self.purge_threshold    = config.get("purge_threshold",    0.95)

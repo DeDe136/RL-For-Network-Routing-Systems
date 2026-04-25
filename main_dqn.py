@@ -16,9 +16,18 @@ Output logs (tất cả trong logs/DQN/):
 import sys, os, argparse
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
+# ── Giới hạn CPU ──────────────────────────────────────────────────────
+os.environ["OMP_NUM_THREADS"]      = "4"
+os.environ["MKL_NUM_THREADS"]      = "4"
+os.environ["OPENBLAS_NUM_THREADS"] = "4"
+
+import torch
+torch.set_num_threads(4)
+torch.set_num_interop_threads(2)
+# ──────────────────────────────────────────────────────────────────────
+
 import env  # noqa
 import gymnasium as gym
-
 
 # ─────────────────────────────────────────────────────────────────────
 #  Env check
@@ -269,7 +278,7 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         dqn_details = collect_link_details(dqn_path, topo_dqn, dqn_accum)
         dqn_info    = make_info(src_n, dst_n, dqn_path, dqn_details, topo_dqn)
 
-        ep_logger.log_episode("DQN", ep_idx, dqn_info, reward=None)
+        ep_logger.log_episode("DQN", ep_idx, dqn_info, reward=None, loss=None)
         dqn_results.append(dqn_info)
 
         dqn_str = "→".join(map(str, dqn_path))
@@ -299,7 +308,7 @@ def run_demo(checkpoint: str, n_pairs: int = 8):
         sp_details = collect_link_details(sp_path, topo_ospf, sp_accum)
         sp_info    = make_info(src_n, dst_n, sp_path, sp_details, topo_ospf)
 
-        ep_logger.log_episode("OSPF", ep_idx, sp_info, reward=None)
+        ep_logger.log_episode("OSPF", ep_idx, sp_info, reward=None, loss=None)
         ospf_results.append(sp_info)
 
         sp_str  = "→".join(map(str, sp_path))

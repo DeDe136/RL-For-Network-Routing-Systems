@@ -67,6 +67,7 @@ def run_evaluate(
             episode = ep,
             info    = info,
             reward  = ep_reward,
+            loss = None
         )
 
         if render:

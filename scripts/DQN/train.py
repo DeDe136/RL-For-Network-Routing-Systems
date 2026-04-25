@@ -16,6 +16,17 @@ Output:
 import sys, os, argparse, yaml
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
+# ── Giới hạn CPU — đặt TRƯỚC khi import torch/numpy ─────────────────
+_CPU_THREADS = 4
+os.environ["OMP_NUM_THREADS"]      = str(_CPU_THREADS)
+os.environ["MKL_NUM_THREADS"]      = str(_CPU_THREADS)
+os.environ["OPENBLAS_NUM_THREADS"] = str(_CPU_THREADS)
+
+import torch
+torch.set_num_threads(_CPU_THREADS)
+# torch.set_num_interop_threads(2) is configured by the entry point (main_dqn.py)
+# ─────────────────────────────────────────────────────────────────────
+
 import env  # noqa — kích hoạt gymnasium.register
 import gymnasium as gym
 import numpy as np
@@ -40,6 +51,20 @@ def main():
     ecfg = load_cfg(args.env_config)
     acfg = load_cfg(args.agent_config)
     tcfg = acfg["training"]
+
+    # ── Log thông tin CPU ─────────────────────────────────────────────
+    print("=" * 56)
+    print("  CPU Configuration")
+    print("=" * 56)
+    print(f"  Logical CPUs available : {os.cpu_count()}")
+    print(f"  PyTorch threads        : {torch.get_num_threads()} "
+          f"(interop: {torch.get_num_interop_threads()})")
+    print(f"  OMP / MKL / OpenBLAS   : {_CPU_THREADS} threads each")
+    print(f"  PyTorch build          : {torch.__version__}")
+    print(f"  CUDA available         : {torch.cuda.is_available()}")
+    print("=" * 56)
+    print()
+    # ─────────────────────────────────────────────────────────────────
 
     num_episodes = args.episodes or tcfg["num_episodes"]
     ckpt_dir     = tcfg["checkpoint_dir"]
@@ -130,6 +155,7 @@ def main():
             episode = ep,
             info    = info,
             reward  = ep_reward,
+            loss = ep_loss / avg_steps,
         )
 
         if ep % tcfg["save_every"] == 0:
@@ -148,7 +174,7 @@ def main():
     topo = environment.unwrapped.topo
     for src, dst in [(0, 7), (1, 6), (2, 5), (3, 7), (0, 5)]:
         volume = float(max(1.0, rng.poisson(10.0)))
-        path   = agent.best_path(src, dst, topo, volume)
+        path, accum   = agent.best_path(src, dst, topo, volume)
         print(f"  {src} → {dst} | Volume: {volume:4.1f} | Path: {path}")
 
 

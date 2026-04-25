@@ -33,7 +33,7 @@ dqn:
 
 # Cấu hình huấn luyện chung
 training:
-  num_episodes: 40000
+  num_episodes: 50000
   print_every: 200
   save_every: 500
   checkpoint_dir: checkpoints
